@@ -28,7 +28,11 @@ fanout_host() {
   local host="$1" override user rc=0
   override=$(lookup_user "$host")
   user="${override:-$default_user}"
-  "$ssh_cmd" -o BatchMode=yes \
+  # `-n` redirects ssh's stdin from /dev/null. Required because ssh otherwise
+  # reads from the caller's stdin, and in `main`'s `while read <<< "$clients"`
+  # loop that means ssh consumes the remaining hosts, so only the first
+  # iteration runs.
+  "$ssh_cmd" -n -o BatchMode=yes \
     -o ConnectTimeout=5 \
     -o StrictHostKeyChecking=accept-new \
     "$user@$host" pmset displaysleepnow >/dev/null 2>&1 || rc=$?

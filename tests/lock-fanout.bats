@@ -39,12 +39,21 @@ make_list_clients_stub() {
 make_ssh_stub() {
   cat >"$STUB_DIR/ssh" <<'STUBEOF'
 #!/bin/bash
+# Model real ssh's stdin behavior: by default it drains stdin (eating the
+# caller's loop-reading here-string), but `-n` redirects stdin from /dev/null.
+# Without this fidelity, the stub can't distinguish the pre-fix bug from the
+# post-fix behavior.
+has_n=0
 target=""
 for a in "$@"; do
   case "$a" in
+    -n) has_n=1 ;;
     *@*) target="$a" ;;
   esac
 done
+if (( has_n == 0 )); then
+  cat >/dev/null
+fi
 echo "TARGET=$target" >>"$SSH_LOG"
 if [[ -n "${STUB_SSH_FAIL_HOST:-}" && "$target" == *"$STUB_SSH_FAIL_HOST"* ]]; then
   exit 255

@@ -39,6 +39,9 @@ make_list_clients_stub() {
 make_ssh_stub() {
   cat >"$STUB_DIR/ssh" <<'STUBEOF'
 #!/bin/bash
+# Drain stdin the way real ssh does. Without this, the stub is unrealistic
+# and cannot detect the "ssh eats loop stdin" regression.
+cat >/dev/null
 target=""
 for a in "$@"; do
   case "$a" in

@@ -18,12 +18,23 @@ jobs:
         shell: bash
         run: |
           shopt -s globstar nullglob
-          files=(**/*.sh)
+          files=(**/*.sh bin/*)
           if (( ${#files[@]} == 0 )); then
-            echo "No .sh files to check"
+            echo "No shell files to check"
           else
             shellcheck -S info "${files[@]}"
           fi
 
       - name: markdownlint
         run: npx -y markdownlint-cli '**/*.md'
+
+  bats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and run bats
+        run: |
+          git clone --depth 1 --branch v1.10.0 https://github.com/bats-core/bats-core.git /tmp/bats
+          /tmp/bats/install.sh "$HOME/.local"
+          export PATH="$HOME/.local/bin:$PATH"
+          bats tests/

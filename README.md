@@ -1,0 +1,146 @@
+# lock-sync
+
+Lock every Synergy-client Mac when the Synergy server Mac locks its screen.
+
+When you lock your primary Mac (via Ctrl+Cmd+Q, idle timeout, or anything
+else), a LaunchAgent fires `ssh <host> pmset displaysleepnow` at each host
+in your `synergy.conf`. One-way, lock-only — no unlock, no remote wake, no
+password handling.
+
+## Requirements
+
+- macOS on the server (uses `notifyutil`, `pmset`, and LaunchAgent —
+  no Linux support).
+- [Synergy](https://symless.com/synergy) running as a server on this Mac,
+  with a `~/Library/Preferences/Synergy/synergy.conf` listing your clients.
+- Passwordless SSH from the server to every client (`ssh <client> true`
+  must succeed without a prompt). Set up keys with `ssh-copy-id` if needed.
+- mDNS resolution working — the default targets client screens as
+  `<short-name>.local`.
+
+## Install
+
+```sh
+git clone git@github.com:smartwatermelon/lock-sync.git ~/Developer/lock-sync
+cd ~/Developer/lock-sync
+bin/install
+```
+
+`bin/install` is idempotent. It:
+
+- Symlinks `bin/lock-watcher`, `bin/lock-fanout`, and `bin/list-clients`
+  into `~/.local/bin/`.
+- Writes the LaunchAgent plist to
+  `~/Library/LaunchAgents/com.smartwatermelon.lock-sync.plist`.
+- Loads the agent via `launchctl bootstrap gui/$UID`.
+
+The agent logs to `~/Library/Logs/lock-sync.log`.
+
+## Configure per-host username overrides (optional)
+
+By default every client is targeted as `$USER@<host>.local`. If some hosts
+need a different SSH user, create `~/.config/lock-sync/config` (overridable
+via `LOCK_SYNC_CONFIG`):
+
+```text
+# ~/.config/lock-sync/config
+# whitespace-separated pairs, `#` starts a line comment
+tilsit.local      operator
+mimolette.local   admin
+```
+
+Unlisted hosts fall back to `$USER`. Absent or empty file is a valid state.
+
+## Verify
+
+After install, lock the screen (Ctrl+Cmd+Q) and tail the log:
+
+```sh
+tail -f ~/Library/Logs/lock-sync.log
+```
+
+Expected output for each lock event:
+
+```text
+2026-04-17T21:20:25Z locked
+2026-04-17T21:20:26Z client=asiago.local    user=andrewrich ssh_exit=0
+2026-04-17T21:20:26Z client=tilsit.local    user=operator   ssh_exit=0
+2026-04-17T21:20:26Z client=mimolette.local user=andrewrich ssh_exit=0
+```
+
+`ssh_exit=0` means the client accepted the lock. A non-zero value flags a
+per-host problem (ssh keys, network, or mDNS name) that doesn't block the
+rest of the fan-out.
+
+## Update
+
+```sh
+cd ~/Developer/lock-sync
+git pull
+launchctl kickstart -k "gui/$(id -u)/com.smartwatermelon.lock-sync"
+```
+
+The symlinks in `~/.local/bin/` point at the repo, so `git pull` is
+live. `kickstart -k` restarts the running agent so it picks up the new
+binary.
+
+## Uninstall
+
+```sh
+cd ~/Developer/lock-sync
+bin/uninstall
+```
+
+Idempotent. Reverses install; preserves `~/Library/Logs/lock-sync.log` so
+you can inspect history.
+
+## Troubleshooting
+
+**Nothing in the log after locking.** Check the agent is running:
+
+```sh
+launchctl print "gui/$(id -u)/com.smartwatermelon.lock-sync" | head -5
+```
+
+`state = running` and a recent `pid` are what you want. If not running,
+check `~/Library/Logs/lock-sync.log` and the agent's spawn errors with
+`launchctl print` full output.
+
+**`ssh_exit=255` on one client.** That's the ssh "connection failed"
+exit. Test manually:
+
+```sh
+/usr/bin/ssh -o BatchMode=yes <client>.local true
+```
+
+Fix the key or DNS issue until that succeeds, then re-lock the screen to
+retry. No agent restart needed.
+
+**`error=list-clients` in the log.** Something's wrong with the Synergy
+conf parser. Run it directly:
+
+```sh
+bin/list-clients
+```
+
+That should emit one hostname per line. If not, check
+`~/Library/Preferences/Synergy/synergy.conf` exists and has a
+`section: screens` block.
+
+## Layout
+
+```text
+bin/
+├── install          # set up symlinks + plist, bootstrap into launchd
+├── uninstall        # reverse install, preserve log
+├── list-clients     # parse synergy.conf → <short>.local hostnames
+├── lock-watcher     # subscribe to Darwin screen-lock notification
+└── lock-fanout      # ssh pmset displaysleepnow to each client
+
+tests/               # bats test suite (`bats tests/` to run)
+docs/plans/          # per-slice design docs
+```
+
+## License
+
+MIT — see `LICENSE.md`.

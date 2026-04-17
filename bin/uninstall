@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LABEL="com.smartwatermelon.lock-sync"
+bin_dir="$HOME/.local/bin"
+plist_path="$HOME/Library/LaunchAgents/$LABEL.plist"
+
+say() { printf 'uninstall: %s\n' "$*"; }
+
+domain="gui/$(id -u)"
+launchctl bootout "$domain/$LABEL" 2>/dev/null || say "(agent was not loaded)"
+
+if [[ -f "$plist_path" ]]; then
+  rm "$plist_path"
+  say "removed $plist_path"
+fi
+
+for b in lock-watcher lock-fanout list-clients; do
+  if [[ -L "$bin_dir/$b" ]]; then
+    rm "$bin_dir/$b"
+    say "removed $bin_dir/$b"
+  fi
+done
+
+say "done (log file at $HOME/Library/Logs/lock-sync.log preserved)"

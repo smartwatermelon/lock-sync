@@ -37,12 +37,14 @@ Bash, shellcheck-clean (project follows the user's global bash standards in `~/.
 
 ## Current state
 
-Slices (a), (b), and (c1) implemented: end-to-end ssh/pmset fan-out works when `bin/lock-watcher` is run manually. Slice (c2) — the LaunchAgent plist and install tooling — is not yet implemented. Per-slice design docs live under `docs/plans/`.
+All slices shipped. Install with `bin/install`; uninstall with `bin/uninstall`. The LaunchAgent auto-starts the watcher on login and writes its log to `~/Library/Logs/lock-sync.log`. Per-slice design docs live under `docs/plans/`.
 
 ## Commands
 
 - `bats tests/` — run the test suite. Local: `brew install bats-core`. CI: installs bats-core v1.10.0 from source to `$HOME/.local` (see `.github/workflows/ci.yml`).
 - `shellcheck -S info bin/*` — lint shell scripts (matches CI and the global bash standard).
+- `bin/install` — symlink binaries into `~/.local/bin/`, write the LaunchAgent plist, bootstrap into launchd. Idempotent.
+- `bin/uninstall` — bootout the agent, remove plist and symlinks. Preserves the log file. Idempotent.
 - `bin/list-clients [path]` — slice (a). Parse Synergy conf, emit `<short>.local` hostnames. No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
 - `bin/lock-watcher` — slices (b)+(c1). Subscribe to `com.apple.screenIsLocked`; on each event emit `<ISO-8601> locked` and invoke `bin/lock-fanout`. Blocks until signaled.
 - `bin/lock-fanout` — slice (c1). Reads hosts from `list-clients`, applies per-host overrides from `~/.config/lock-sync/config`, SSHes `pmset displaysleepnow` per host, emits one `<ISO-8601> client=<host> user=<user> ssh_exit=<rc>` line per host.

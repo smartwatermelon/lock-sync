@@ -37,13 +37,14 @@ Bash, shellcheck-clean (project follows the user's global bash standards in `~/.
 
 ## Current state
 
-Slice (a) implemented: `bin/list-clients` parses the Synergy conf and emits `<short>.local` hostnames. Slice (b) (notification watcher) and slice (c) (end-to-end ssh/pmset + LaunchAgent) are not yet implemented. Per-slice design docs live under `docs/plans/`.
+Slices (a) and (b) implemented. Slice (c) — end-to-end ssh/pmset fan-out + per-client override config + LaunchAgent plist — is not yet implemented. Per-slice design docs live under `docs/plans/`.
 
 ## Commands
 
 - `bats tests/` — run the test suite. Local: `brew install bats-core`. CI: installs bats-core v1.10.0 from source to `$HOME/.local` (see `.github/workflows/ci.yml`).
 - `shellcheck -S info bin/*` — lint shell scripts (matches CI and the global bash standard).
-- `bin/list-clients [path]` — run the parser. No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
+- `bin/list-clients [path]` — slice (a). Parse Synergy conf, emit `<short>.local` hostnames. No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
+- `bin/lock-watcher` — slice (b). Subscribe to `com.apple.screenIsLocked`, emit one `<ISO-8601> locked` line per event to stdout. Blocks until signaled.
 
 ## `.claude/` directory
 

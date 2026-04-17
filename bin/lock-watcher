@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+on_lock() {
+  local ts
+  ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  printf '%s locked\n' "$ts"
+}
+
+notifyutil -w com.apple.screenIsLocked | while IFS= read -r _; do
+  on_lock
+done

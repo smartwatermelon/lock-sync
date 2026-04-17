@@ -15,6 +15,7 @@ setup() {
   export LOCK_SYNC_CONFIG="$TMPDIR/no-such-config"
   SSH_LOG="$TMPDIR/ssh.log"
   export SSH_LOG
+  export LOCK_SYNC_SSH="$STUB_DIR/ssh"
 }
 
 teardown() {
@@ -167,4 +168,24 @@ EOF
   [[ "${lines[1]}" == *"user=defaultuser"* ]]
   grep -q '^TARGET=admin@asiago.local$' "$SSH_LOG"
   grep -q '^TARGET=defaultuser@tilsit.local$' "$SSH_LOG"
+}
+
+@test "LOCK_SYNC_SSH selects the ssh binary, bypassing PATH wrappers" {
+  make_list_clients_stub "asiago.local"
+  # A distinct ssh stub outside STUB_DIR so PATH lookup cannot find it.
+  cat >"$TMPDIR/custom-ssh" <<EOF
+#!/bin/bash
+printf 'custom ssh ran\n' >"$TMPDIR/custom-ssh.marker"
+exit 0
+EOF
+  chmod +x "$TMPDIR/custom-ssh"
+  export LOCK_SYNC_SSH="$TMPDIR/custom-ssh"
+
+  # A PATH-located ssh stub that should NOT be invoked.
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ -f "$TMPDIR/custom-ssh.marker" ]
+  [ ! -s "$SSH_LOG" ]
 }

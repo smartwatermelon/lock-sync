@@ -21,7 +21,7 @@ teardown() {
 @test "single lock event emits one ISO-8601 log line and exits 0" {
   cat >"$STUB_DIR/notifyutil" <<'EOF'
 #!/bin/bash
-echo "com.apple.screenIsLocked"
+echo "com.apple.sessionagent.screenIsLocked"
 EOF
   chmod +x "$STUB_DIR/notifyutil"
 
@@ -34,9 +34,9 @@ EOF
 @test "three lock events emit three log lines in order" {
   cat >"$STUB_DIR/notifyutil" <<'EOF'
 #!/bin/bash
-echo "com.apple.screenIsLocked"
-echo "com.apple.screenIsLocked"
-echo "com.apple.screenIsLocked"
+echo "com.apple.sessionagent.screenIsLocked"
+echo "com.apple.sessionagent.screenIsLocked"
+echo "com.apple.sessionagent.screenIsLocked"
 EOF
   chmod +x "$STUB_DIR/notifyutil"
 
@@ -63,7 +63,7 @@ EOF
 @test "notifyutil dying non-zero mid-stream propagates via pipefail" {
   cat >"$STUB_DIR/notifyutil" <<'EOF'
 #!/bin/bash
-echo "com.apple.screenIsLocked"
+echo "com.apple.sessionagent.screenIsLocked"
 exit 1
 EOF
   chmod +x "$STUB_DIR/notifyutil"
@@ -77,7 +77,7 @@ EOF
 @test "on_lock invokes LOCK_SYNC_FANOUT on each event" {
   cat >"$STUB_DIR/notifyutil" <<'EOF'
 #!/bin/bash
-echo "com.apple.screenIsLocked"
+echo "com.apple.sessionagent.screenIsLocked"
 EOF
   chmod +x "$STUB_DIR/notifyutil"
 
@@ -93,4 +93,19 @@ EOF
   [ "$status" -eq 0 ]
   [ -f "$TMPDIR/fanout.marker" ]
   [ "$(cat "$TMPDIR/fanout.marker")" = "fanout-ran" ]
+}
+
+@test "lock-watcher subscribes to com.apple.sessionagent.screenIsLocked" {
+  # Stub notifyutil records its args and emits one event so the watcher exits.
+  cat >"$STUB_DIR/notifyutil" <<EOF
+#!/bin/bash
+echo "\$@" >"$TMPDIR/notifyutil.args"
+echo "com.apple.sessionagent.screenIsLocked"
+EOF
+  chmod +x "$STUB_DIR/notifyutil"
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ -f "$TMPDIR/notifyutil.args" ]
+  grep -q 'com.apple.sessionagent.screenIsLocked' "$TMPDIR/notifyutil.args"
 }

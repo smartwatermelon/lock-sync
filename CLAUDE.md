@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `lock-sync` locks Synergy-client Macs when the Synergy server (the primary Mac running this tool) locks its screen. It is a deliberate simplification of the abandoned `lock-sync-old` project.
 
-**Scope:** one-way, lock-only. The server watches for `com.apple.screenIsLocked`, then SSHes `pmset displaysleepnow` to each Synergy client.
+**Scope:** one-way, lock-only. The server watches for `com.apple.sessionagent.screenIsLocked`, then SSHes `pmset displaysleepnow` to each Synergy client.
 
 ## Non-goals (do not add these)
 
@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workflow
 
-1. Subscribe to the `com.apple.screenIsLocked` Darwin notification (`notifyutil -w com.apple.screenIsLocked` is the shell-native way).
+1. Subscribe to the `com.apple.sessionagent.screenIsLocked` Darwin notification (`notifyutil -w com.apple.sessionagent.screenIsLocked` is the shell-native way).
 2. On notification, read the Synergy client list from `~/Library/Preferences/Synergy/synergy.conf`.
 3. For each client:
    - Apply per-client username override from local config if present, else default to current user (`ssh $CLIENT` vs `ssh $OVERRIDEUSER@$CLIENT`).
@@ -46,7 +46,7 @@ All slices shipped. Install with `bin/install`; uninstall with `bin/uninstall`. 
 - `bin/install` — symlink binaries into `~/.local/bin/`, write the LaunchAgent plist, bootstrap into launchd. Idempotent.
 - `bin/uninstall` — bootout the agent, remove plist and symlinks. Preserves the log file. Idempotent.
 - `bin/list-clients [path]` — slice (a). Parse Synergy conf, emit `<short>.local` hostnames. No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
-- `bin/lock-watcher` — slices (b)+(c1). Subscribe to `com.apple.screenIsLocked`; on each event emit `<ISO-8601> locked` and invoke `bin/lock-fanout`. Blocks until signaled.
+- `bin/lock-watcher` — slices (b)+(c1). Subscribe to `com.apple.sessionagent.screenIsLocked`; on each event emit `<ISO-8601> locked` and invoke `bin/lock-fanout`. Blocks until signaled.
 - `bin/lock-fanout` — slice (c1). Reads hosts from `list-clients`, applies per-host overrides from `~/.config/lock-sync/config`, SSHes `pmset displaysleepnow` per host, emits one `<ISO-8601> client=<host> user=<user> ssh_exit=<rc>` line per host.
 
 ## `.claude/` directory

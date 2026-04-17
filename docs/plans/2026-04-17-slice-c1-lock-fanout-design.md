@@ -7,7 +7,7 @@ Status: approved, ready to implement
 
 Third implementation slice of lock-sync, first of two c-slices. Wires the
 existing slice (a) parser and slice (b) watcher end-to-end: on each
-`com.apple.screenIsLocked` event, fan out to every Synergy client via ssh,
+`com.apple.sessionagent.screenIsLocked` event, fan out to every Synergy client via ssh,
 running `pmset displaysleepnow` on each, with per-client username overrides
 and per-client result logging.
 
@@ -105,7 +105,7 @@ on_lock() {
   "${LOCK_SYNC_FANOUT:-$script_dir/lock-fanout}" || true
 }
 
-notifyutil -w com.apple.screenIsLocked | while IFS= read -r _; do
+notifyutil -w com.apple.sessionagent.screenIsLocked | while IFS= read -r _; do
   on_lock
 done
 ```

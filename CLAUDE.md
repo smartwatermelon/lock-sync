@@ -29,7 +29,7 @@ SSH-to-self is a no-op on an already-locked Mac — do not special-case it.
 ## Key external inputs
 
 - **Synergy client list:** `~/Library/Preferences/Synergy/synergy.conf`. This is the source of truth for which hosts to lock — do not maintain a parallel client list.
-- **Per-client overrides:** local config (path/format TBD at implementation time). Stores username overrides only.
+- **Per-client username overrides:** `~/.config/lock-sync/config` (overridable via `LOCK_SYNC_CONFIG`). Plain text, whitespace-separated `<host> <user>`, `#` line comments. Unlisted hosts use `$USER`. Absent or empty file is a valid state.
 
 ## Runtime
 
@@ -37,14 +37,15 @@ Bash, shellcheck-clean (project follows the user's global bash standards in `~/.
 
 ## Current state
 
-Slices (a) and (b) implemented. Slice (c) — end-to-end ssh/pmset fan-out + per-client override config + LaunchAgent plist — is not yet implemented. Per-slice design docs live under `docs/plans/`.
+Slices (a), (b), and (c1) implemented: end-to-end ssh/pmset fan-out works when `bin/lock-watcher` is run manually. Slice (c2) — the LaunchAgent plist and install tooling — is not yet implemented. Per-slice design docs live under `docs/plans/`.
 
 ## Commands
 
 - `bats tests/` — run the test suite. Local: `brew install bats-core`. CI: installs bats-core v1.10.0 from source to `$HOME/.local` (see `.github/workflows/ci.yml`).
 - `shellcheck -S info bin/*` — lint shell scripts (matches CI and the global bash standard).
 - `bin/list-clients [path]` — slice (a). Parse Synergy conf, emit `<short>.local` hostnames. No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
-- `bin/lock-watcher` — slice (b). Subscribe to `com.apple.screenIsLocked`, emit one `<ISO-8601> locked` line per event to stdout. Blocks until signaled.
+- `bin/lock-watcher` — slices (b)+(c1). Subscribe to `com.apple.screenIsLocked`; on each event emit `<ISO-8601> locked` and invoke `bin/lock-fanout`. Blocks until signaled.
+- `bin/lock-fanout` — slice (c1). Reads hosts from `list-clients`, applies per-host overrides from `~/.config/lock-sync/config`, SSHes `pmset displaysleepnow` per host, emits one `<ISO-8601> client=<host> user=<user> ssh_exit=<rc>` line per host.
 
 ## `.claude/` directory
 

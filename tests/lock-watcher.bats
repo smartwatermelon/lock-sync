@@ -11,6 +11,7 @@ setup() {
   STUB_DIR="$TMPDIR/stub"
   mkdir -p "$STUB_DIR"
   PATH="$STUB_DIR:$PATH"
+  export LOCK_SYNC_FANOUT=/usr/bin/true
 }
 
 teardown() {
@@ -71,4 +72,25 @@ EOF
   [ "$status" -ne 0 ]
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ locked$ ]]
+}
+
+@test "on_lock invokes LOCK_SYNC_FANOUT on each event" {
+  cat >"$STUB_DIR/notifyutil" <<'EOF'
+#!/bin/bash
+echo "com.apple.screenIsLocked"
+EOF
+  chmod +x "$STUB_DIR/notifyutil"
+
+  # Stub fanout writes a sentinel; test asserts the file exists.
+  cat >"$STUB_DIR/fanout-stub" <<EOF
+#!/bin/bash
+echo fanout-ran >"$TMPDIR/fanout.marker"
+EOF
+  chmod +x "$STUB_DIR/fanout-stub"
+  export LOCK_SYNC_FANOUT="$STUB_DIR/fanout-stub"
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ -f "$TMPDIR/fanout.marker" ]
+  [ "$(cat "$TMPDIR/fanout.marker")" = "fanout-ran" ]
 }

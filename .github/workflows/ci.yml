@@ -32,5 +32,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: npm install -g bats
-      - run: bats tests/
+      - name: Install and run bats
+        run: |
+          git clone --depth 1 --branch v1.10.0 https://github.com/bats-core/bats-core.git /tmp/bats
+          /tmp/bats/install.sh "$HOME/.local"
+          export PATH="$HOME/.local/bin:$PATH"
+          bats tests/

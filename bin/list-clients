@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+conf="${1:-$HOME/Library/Preferences/Synergy/synergy.conf}"
+
+if [[ ! -f "$conf" ]] || [[ ! -r "$conf" ]]; then
+  printf 'list-clients: cannot read %s\n' "$conf" >&2
+  exit 1
+fi
+
+awk '
+  /^section: screens[[:space:]]*$/ { in_screens = 1; next }
+  in_screens && /^end[[:space:]]*$/ { in_screens = 0; next }
+  in_screens && /^\t[^ \t].*:[[:space:]]*$/ {
+    name = $0
+    sub(/^\t/, "", name)
+    sub(/:[[:space:]]*$/, "", name)
+    sub(/-[0-9a-fA-F]{8}$/, "", name)
+    names[++n] = name ".local"
+  }
+  END {
+    if (in_screens) {
+      print "list-clients: section: screens not closed" > "/dev/stderr"
+      exit 2
+    }
+    for (i = 1; i <= n; i++) print names[i]
+  }
+' "$conf"

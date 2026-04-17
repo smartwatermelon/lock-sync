@@ -37,7 +37,13 @@ Bash, shellcheck-clean (project follows the user's global bash standards in `~/.
 
 ## Current state
 
-Greenfield — no implementation yet. Only `LICENSE.md` and `.claude/` scaffolding exist. Build/test commands will be added to this file once they exist; do not fabricate them.
+Slice (a) implemented: `bin/list-clients` parses the Synergy conf and emits `<short>.local` hostnames. Slice (b) (notification watcher) and slice (c) (end-to-end ssh/pmset + LaunchAgent) are not yet implemented. Per-slice design docs live under `docs/plans/`.
+
+## Commands
+
+- `bats tests/` — run the test suite. Local: `brew install bats-core`. CI: installs via `npm install -g bats`.
+- `shellcheck -S info bin/*` — lint shell scripts (matches CI and the global bash standard).
+- `bin/list-clients [path]` — run the parser. No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
 
 ## `.claude/` directory
 

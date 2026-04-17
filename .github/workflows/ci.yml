@@ -18,12 +18,19 @@ jobs:
         shell: bash
         run: |
           shopt -s globstar nullglob
-          files=(**/*.sh)
+          files=(**/*.sh bin/*)
           if (( ${#files[@]} == 0 )); then
-            echo "No .sh files to check"
+            echo "No shell files to check"
           else
             shellcheck -S info "${files[@]}"
           fi
 
       - name: markdownlint
         run: npx -y markdownlint-cli '**/*.md'
+
+  bats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g bats
+      - run: bats tests/

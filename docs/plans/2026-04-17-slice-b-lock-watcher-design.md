@@ -6,7 +6,7 @@ Status: approved, ready to implement
 ## Purpose
 
 Second implementation slice of lock-sync. A long-running bash script that
-subscribes to the `com.apple.screenIsLocked` Darwin notification and emits one
+subscribes to the `com.apple.sessionagent.screenIsLocked` Darwin notification and emits one
 log line to stdout per lock event. No ssh yet — that's slice (c).
 
 ## Contract
@@ -19,7 +19,7 @@ log line to stdout per lock event. No ssh yet — that's slice (c).
 bin/lock-watcher
 ```
 
-No args. Blocks, watches `com.apple.screenIsLocked`, emits one log line to
+No args. Blocks, watches `com.apple.sessionagent.screenIsLocked`, emits one log line to
 stdout per lock event, runs until signaled (`SIGTERM` / `SIGINT`).
 
 **Output (stdout):** one line per lock event, ISO 8601 UTC timestamp + tag:
@@ -54,7 +54,7 @@ on_lock() {
   printf '%s locked\n' "$ts"
 }
 
-notifyutil -w com.apple.screenIsLocked | while IFS= read -r _; do
+notifyutil -w com.apple.sessionagent.screenIsLocked | while IFS= read -r _; do
   on_lock
 done
 ```
@@ -70,7 +70,7 @@ propagates date's failure under `set -e`.
   `on_lock` with the ssh fan-out. Nothing else in the script changes. The
   loop stays handler-agnostic.
 - **`_` as the read variable:** the line content is always
-  `com.apple.screenIsLocked` (the key we already subscribed to); it's noise.
+  `com.apple.sessionagent.screenIsLocked` (the key we already subscribed to); it's noise.
   `_` is the bash convention for "I don't care."
 - **`set -o pipefail`:** makes the script's exit code reflect `notifyutil`
   failures. Without it, the pipeline exit would always be the `while`'s
@@ -120,7 +120,7 @@ setup() {
 ### Cases
 
 1. **Single event → one log line, exit 0, correct format.** Stub emits one
-   `com.apple.screenIsLocked` line, exits 0. Watcher emits one line matching
+   `com.apple.sessionagent.screenIsLocked` line, exits 0. Watcher emits one line matching
    `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z locked$`.
 2. **Three events → three log lines in order.** Stub emits three lines.
    Watcher emits three log lines, all format-valid.

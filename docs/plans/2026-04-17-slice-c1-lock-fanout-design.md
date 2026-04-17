@@ -7,7 +7,7 @@ Status: approved, ready to implement
 
 Third implementation slice of lock-sync, first of two c-slices. Wires the
 existing slice (a) parser and slice (b) watcher end-to-end: on each
-`com.apple.screenIsLocked` event, fan out to every Synergy client via ssh,
+`com.apple.sessionagent.screenIsLocked` event, fan out to every Synergy client via ssh,
 running `pmset displaysleepnow` on each, with per-client username overrides
 and per-client result logging.
 
@@ -57,12 +57,16 @@ match wins.
 ## SSH invocation per client
 
 ```bash
-ssh -o BatchMode=yes \
+"$ssh_cmd" -o BatchMode=yes \
     -o ConnectTimeout=5 \
     -o StrictHostKeyChecking=accept-new \
     <user>@<host> pmset displaysleepnow
 ```
 
+- `$ssh_cmd` resolves to `${LOCK_SYNC_SSH:-/usr/bin/ssh}`. Hard-coding the
+  system binary by default sidesteps any PATH-injected ssh wrapper (e.g. a
+  1Password-token shim) that can't satisfy `BatchMode=yes`. `LOCK_SYNC_SSH`
+  overrides for tests.
 - `BatchMode=yes` — keys only; no interactive prompts. Unconfigured hosts
   fail immediately instead of hanging.
 - `ConnectTimeout=5` — 5 seconds; unreachable hosts don't block the next.
@@ -105,7 +109,7 @@ on_lock() {
   "${LOCK_SYNC_FANOUT:-$script_dir/lock-fanout}" || true
 }
 
-notifyutil -w com.apple.screenIsLocked | while IFS= read -r _; do
+notifyutil -w com.apple.sessionagent.screenIsLocked | while IFS= read -r _; do
   on_lock
 done
 ```
@@ -119,6 +123,7 @@ set -euo pipefail
 conf="${LOCK_SYNC_CONFIG:-$HOME/.config/lock-sync/config}"
 script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 list_clients_cmd="${LOCK_SYNC_LIST_CLIENTS:-$script_dir/list-clients}"
+ssh_cmd="${LOCK_SYNC_SSH:-/usr/bin/ssh}"
 default_user="${USER:-$(id -un)}"
 
 log() {
@@ -140,7 +145,7 @@ fanout_host() {
   local host="$1" override user rc=0
   override=$(lookup_user "$host")
   user="${override:-$default_user}"
-  ssh -o BatchMode=yes \
+  "$ssh_cmd" -o BatchMode=yes \
       -o ConnectTimeout=5 \
       -o StrictHostKeyChecking=accept-new \
       "$user@$host" pmset displaysleepnow >/dev/null 2>&1 || rc=$?

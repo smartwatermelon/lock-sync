@@ -10,6 +10,9 @@ on_lock() {
   "${LOCK_SYNC_FANOUT:-$script_dir/lock-fanout}" || true
 }
 
-notifyutil -w com.apple.screenIsLocked | while IFS= read -r _; do
+# Darwin notify(3) key: loginwindow's SessionAgentNotificationCenter posts
+# `com.apple.sessionagent.screenIsLocked` here, while `com.apple.screenIsLocked`
+# only goes to NSDistributedNotificationCenter (which notifyutil doesn't see).
+notifyutil -w com.apple.sessionagent.screenIsLocked | while IFS= read -r _; do
   on_lock
 done

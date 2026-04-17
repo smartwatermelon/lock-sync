@@ -147,15 +147,21 @@ Negative / anti-regression:
 
 ## CI integration
 
-Add a second job to `.github/workflows/ci.yml`:
+Add a second job to `.github/workflows/ci.yml`. Install bats-core from source
+into `$HOME/.local` (pinned tag), avoiding `npm install -g` which hits EACCES
+on the GitHub-hosted runner and avoiding apt's older version:
 
 ```yaml
 bats:
   runs-on: ubuntu-latest
   steps:
     - uses: actions/checkout@v4
-    - run: sudo apt-get update && sudo apt-get install -y bats
-    - run: bats tests/
+    - name: Install and run bats
+      run: |
+        git clone --depth 1 --branch v1.10.0 https://github.com/bats-core/bats-core.git /tmp/bats
+        /tmp/bats/install.sh "$HOME/.local"
+        export PATH="$HOME/.local/bin:$PATH"
+        bats tests/
 ```
 
 ## Implementation order (TDD)

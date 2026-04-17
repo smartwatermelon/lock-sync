@@ -41,7 +41,7 @@ Slice (a) implemented: `bin/list-clients` parses the Synergy conf and emits `<sh
 
 ## Commands
 
-- `bats tests/` — run the test suite. Local: `brew install bats-core`. CI: installs via `npm install -g bats`.
+- `bats tests/` — run the test suite. Local: `brew install bats-core`. CI: installs bats-core v1.10.0 from source to `$HOME/.local` (see `.github/workflows/ci.yml`).
 - `shellcheck -S info bin/*` — lint shell scripts (matches CI and the global bash standard).
 - `bin/list-clients [path]` — run the parser. No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
 

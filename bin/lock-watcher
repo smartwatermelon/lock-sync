@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 on_lock() {
   local ts
   ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
   printf '%s locked\n' "$ts"
+  "${LOCK_SYNC_FANOUT:-$script_dir/lock-fanout}" || true
 }
 
 notifyutil -w com.apple.screenIsLocked | while IFS= read -r _; do

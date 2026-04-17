@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          files=(**/*.sh)
+          if (( ${#files[@]} == 0 )); then
+            echo "No .sh files to check"
+          else
+            shellcheck -S info "${files[@]}"
+          fi
+
+      - name: markdownlint
+        run: npx -y markdownlint-cli '**/*.md'

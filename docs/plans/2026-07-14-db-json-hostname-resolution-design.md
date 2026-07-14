@@ -72,8 +72,11 @@ only refines *what each host is named*.
    is readable:
 
    ```bash
-   jq -r '.data[]? | select(.id and .name) | "\(.id[-8:])\t\(.name)"' "$db"
+   jq -r '.data.computers[]? | select(.id and .name) | "\(.id[-8:])\t\(.name)"' "$db"
    ```
+
+   (Machine entries live at `.data.computers[]` — `.data` is an object of many
+   keys, not the machine array.)
 
    Load into `declare -A dbname`. If `jq` is absent, `db.json` is missing, or
    `jq` exits non-zero (malformed JSON), the map stays empty.

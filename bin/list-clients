@@ -8,21 +8,84 @@ if [[ ! -f "$conf" ]] || [[ ! -r "$conf" ]]; then
   exit 1
 fi
 
-awk '
+# Synergy sanitizes screen names (e.g. drops hyphens) before writing them to
+# synergy.conf, so the conf alone cannot reproduce a client's real hostname.
+# The sibling db.json holds the true display name, joinable on the last 8 hex
+# of its `id` field. Build a suffix -> name map from it when jq is available;
+# otherwise fall back to stripping the Synergy instance suffix.
+db="${LOCK_SYNC_DB:-$(dirname "$conf")/db.json}"
+
+# Locate jq. launchd runs this agent with a minimal PATH that excludes
+# Homebrew, so probe the common absolute locations too (cf. lock-fanout's
+# hardcoded /usr/bin/ssh for the same reason).
+jq_bin=""
+if command -v jq >/dev/null 2>&1; then
+  jq_bin="$(command -v jq)"
+else
+  for cand in /opt/homebrew/bin/jq /usr/local/bin/jq; do
+    if [[ -x "$cand" ]]; then
+      jq_bin="$cand"
+      break
+    fi
+  done
+fi
+
+# suffix<TAB>name lines. Empty when jq or db.json is unavailable or the JSON is
+# malformed, which sends every screen down the suffix-strip fallback path.
+db_map=""
+if [[ -n "$jq_bin" && -r "$db" ]]; then
+  db_map="$("$jq_bin" -r '.data.computers[]? | select(.id and .name) | "\(.id[-8:])\t\(.name)"' "$db" 2>/dev/null || true)"
+fi
+
+# Turn a raw Synergy screen label into an SSH-ready <host>.local name.
+resolve() {
+  local label="$1"
+  local suffix="" base="$label" name=""
+
+  # Match a trailing -<8 hex> Synergy instance suffix using a glob with
+  # explicit character classes. Avoids [[ =~ ]] with a {8} interval, whose
+  # support varies across bash builds, and BASH_REMATCH — keeping this runnable
+  # under the system bash 3.2 that launchd's minimal PATH selects.
+  local hex='[0-9a-fA-F]'
+  if [[ "$label" == *-$hex$hex$hex$hex$hex$hex$hex$hex ]]; then
+    suffix="${label##*-}"
+    base="${label%-*}"
+  fi
+
+  if [[ -n "$suffix" && -n "$db_map" ]]; then
+    name="$(printf '%s\n' "$db_map" \
+      | awk -F'\t' -v s="$suffix" 'tolower($1) == tolower(s) { print $2; exit }')"
+  fi
+
+  # No db match (or no suffix): keep the suffix-stripped label, as before.
+  [[ -n "$name" ]] || name="$base"
+  name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+  [[ "$name" == *.local ]] || name="$name.local"
+  printf '%s\n' "$name"
+}
+
+# awk extracts raw screen labels (still guarding section boundaries and the
+# unterminated-section error); bash resolves each against db.json. Capturing to
+# a variable lets awk's exit 2 propagate via set -e before anything is printed.
+labels="$(awk '
   /^section: screens[[:space:]]*$/ { in_screens = 1; next }
   in_screens && /^end[[:space:]]*$/ { in_screens = 0; next }
   in_screens && /^\t[^ \t].*:[[:space:]]*$/ {
     name = $0
     sub(/^\t/, "", name)
     sub(/:[[:space:]]*$/, "", name)
-    sub(/-[0-9a-fA-F]{8}$/, "", name)
-    names[++n] = name ".local"
+    print name
   }
   END {
     if (in_screens) {
       print "list-clients: section: screens not closed" > "/dev/stderr"
       exit 2
     }
-    for (i = 1; i <= n; i++) print names[i]
   }
-' "$conf"
+' "$conf")"
+
+[[ -n "$labels" ]] || exit 0
+while IFS= read -r label; do
+  [[ -n "$label" ]] || continue
+  resolve "$label"
+done <<<"$labels"

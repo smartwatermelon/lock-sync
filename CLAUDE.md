@@ -29,6 +29,7 @@ SSH-to-self is a no-op on an already-locked Mac — do not special-case it.
 ## Key external inputs
 
 - **Synergy client list:** `~/Library/Preferences/Synergy/synergy.conf`. This is the source of truth for which hosts to lock — do not maintain a parallel client list.
+- **Synergy display names:** `~/Library/Preferences/Synergy/db.json` (sibling of the conf; overridable via `LOCK_SYNC_DB`). Synergy sanitizes screen names before writing the conf (e.g. it drops hyphens: `arich-mac` becomes the screen `arichmac-3181d4b4`), so the conf alone cannot reproduce a client's real hostname. `list-clients` recovers the true name from db.json's `computers[].name`, joined on the last 8 hex of `id` matching the conf's instance suffix. Read via `jq` (a soft dependency — macOS ships `/usr/bin/jq`; Homebrew paths are probed as a fallback). When jq or db.json is unavailable, it degrades to stripping the suffix. Use `name`, not `hostname` — the two diverge (`hostname` can be the default `Andrews-Mac-mini.local`).
 - **Per-client username overrides:** `~/.config/lock-sync/config` (overridable via `LOCK_SYNC_CONFIG`). Plain text, whitespace-separated `<host> <user>`, `#` line comments. Unlisted hosts use `$USER`. Absent or empty file is a valid state.
 
 ## Runtime
@@ -45,7 +46,7 @@ All slices shipped. Install with `bin/install`; uninstall with `bin/uninstall`. 
 - `shellcheck -S info bin/*` — lint shell scripts (matches CI and the global bash standard).
 - `bin/install` — symlink binaries into `~/.local/bin/`, write the LaunchAgent plist, bootstrap into launchd. Idempotent.
 - `bin/uninstall` — bootout the agent, remove plist and symlinks. Preserves the log file. Idempotent.
-- `bin/list-clients [path]` — slice (a). Parse Synergy conf, emit `<short>.local` hostnames. No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
+- `bin/list-clients [path]` — slice (a). Parse Synergy conf, emit `<host>.local` hostnames, resolving real display names via the sibling `db.json` when available (see Key external inputs). No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
 - `bin/lock-watcher` — slices (b)+(c1). Subscribe to `com.apple.sessionagent.screenIsLocked`; on each event emit `<ISO-8601> locked` and invoke `bin/lock-fanout`. Blocks until signaled.
 - `bin/lock-fanout` — slice (c1). Reads hosts from `list-clients`, applies per-host overrides from `~/.config/lock-sync/config`, SSHes `pmset displaysleepnow` per host, emits one `<ISO-8601> client=<host> user=<user> ssh_exit=<rc>` line per host.
 

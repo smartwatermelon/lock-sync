@@ -129,10 +129,10 @@ Happy paths:
 
 Fallback / anti-regression:
 
-5. Suffix present in conf but absent from `db.json` → heuristic for that screen,
+1. Suffix present in conf but absent from `db.json` → heuristic for that screen,
    others still resolved from db.
-6. `db.json` present but malformed (jq errors) → whole run falls back, exit 0.
-7. No `db.json` sibling → heuristic. Already covered by the existing fixture
+2. `db.json` present but malformed (jq errors) → whole run falls back, exit 0.
+3. No `db.json` sibling → heuristic. Already covered by the existing fixture
    tests, which must stay green **unmodified** — the real proof of
    non-regression.
 

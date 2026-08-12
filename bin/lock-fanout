@@ -8,6 +8,8 @@ list_clients_cmd="${LOCK_SYNC_LIST_CLIENTS:-$script_dir/list-clients}"
 # (e.g. 1Password agents). Overridable via LOCK_SYNC_SSH for tests.
 ssh_cmd="${LOCK_SYNC_SSH:-/usr/bin/ssh}"
 default_user="${USER:-$(id -un)}"
+local_lock_guard="$script_dir/lock-guard"
+shasum_cmd="${LOCK_SYNC_SHASUM:-/usr/bin/shasum}"
 
 log() {
   local ts
@@ -24,23 +26,114 @@ lookup_user() {
   ' "$conf"
 }
 
+# Ensures $host has a current copy of lock-guard at ~/.local/bin/lock-guard,
+# pushing it over SSH if missing or stale, without requiring the client to
+# ever clone this repo (see docs/plans/2026-08-12-lock-guard-remote-
+# provisioning-design.md — clients have zero footprint by design).
+# Returns 0 if the client now has (or already had) a current lock-guard.
+# Returns 1 if the SSH session itself failed (client unreachable, auth
+# failure, timeout, etc) during the checksum check or the push — callers
+# fall back to bare pmset in that case rather than attempting a lock-guard
+# call that would fail the same way. A remote lock-guard that simply
+# doesn't exist yet (new client) is NOT treated as a failure here: it's
+# expected to fall through to the push logic (see the `|| true` comment
+# below on the checksum call for why).
+provision_host() {
+  local host="$1" user="$2" local_sha remote_sha rc=0
+
+  # Fail fast if the local lock-guard is missing/unreadable, before any
+  # shasum or ssh call. Without this guard, a missing local_lock_guard
+  # would make local_sha an empty string, which never matches a real
+  # remote_sha, so the function would still attempt the push below with
+  # stdin redirected from a nonexistent file — a risk of transferring an
+  # empty stream and leaving the client with a zero-byte-but-executable
+  # lock-guard that exits 0 without ever calling pmset (silently never
+  # locking), instead of cleanly falling back to the pmset path.
+  [[ -r "$local_lock_guard" ]] || return 1
+
+  local_sha="$("$shasum_cmd" -a 256 "$local_lock_guard" 2>/dev/null | awk '{print $1}')"
+
+  # Bare `shasum` here (not $shasum_cmd) is intentional, not an oversight:
+  # $shasum_cmd/LOCK_SYNC_SHASUM is a local-machine override for tests, and
+  # the remote side is a different machine entirely — there is nothing to
+  # thread the override to. Relies on stock macOS shipping shasum at
+  # /usr/bin/shasum on the client's non-interactive SSH PATH; a client
+  # missing shasum will permanently hit the warn=provision-failed fallback
+  # below (never regain meeting-suppression) since that log line doesn't
+  # distinguish "unreachable" from "shasum missing" — a future reader
+  # should know this rather than assume it's a mystery.
+  #
+  # `|| true` on the remote side is deliberate, not a swallowed error: a
+  # brand-new client that has never had lock-guard installed will have no
+  # ~/.local/bin/lock-guard, and `shasum` on a missing file exits 1 even
+  # with stderr redirected to /dev/null. Without `|| true`, that remote
+  # exit 1 becomes ssh's own exit code, which is indistinguishable here
+  # from ssh itself failing (unreachable host, auth failure, timeout) —
+  # the two would both trip `rc != 0` below and return 1, permanently
+  # stuck falling back to bare pmset and never provisioning new clients.
+  # `|| true` makes "file not found" exit 0 with empty stdout, so `rc`
+  # below reflects only "did the SSH session itself succeed" — the actual
+  # signal this function needs to decide push-vs-fallback. An empty
+  # remote_sha never equals a real local_sha, so it still falls through to
+  # the push logic exactly as a checksum mismatch would.
+  remote_sha="$("$ssh_cmd" -n -o BatchMode=yes \
+    -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=accept-new \
+    "$user@$host" 'shasum -a 256 ~/.local/bin/lock-guard 2>/dev/null || true' 2>/dev/null)" || rc=$?
+  if ((rc != 0)); then
+    return 1
+  fi
+  remote_sha="${remote_sha%% *}"
+
+  if [[ "$remote_sha" == "$local_sha" ]]; then
+    return 0
+  fi
+
+  # Write to a temp file and atomically rename into place, so a truncated
+  # or dropped transfer never leaves a partial-but-executable lock-guard on
+  # the client: the client only ever has the old complete file or the new
+  # complete file, never something in between. The temp filename is a
+  # fixed literal, not generated via remote `$(mktemp)`, so this whole
+  # remote script has no `$`-expansions and no ~-in-quotes for the local
+  # shell to (mis)interpret — it's an inert remote-shell literal end to end.
+  "$ssh_cmd" -o BatchMode=yes \
+    -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=accept-new \
+    "$user@$host" 'mkdir -p ~/.local/bin && cat >~/.local/bin/.lock-guard.tmp && chmod +x ~/.local/bin/.lock-guard.tmp && mv -f ~/.local/bin/.lock-guard.tmp ~/.local/bin/lock-guard' \
+    <"$local_lock_guard" >/dev/null 2>&1 || rc=$?
+  if ((rc != 0)); then
+    return 1
+  fi
+  return 0
+}
+
 fanout_host() {
   local host="$1" override user rc=0
   override=$(lookup_user "$host")
   user="${override:-$default_user}"
-  # `-n` redirects ssh's stdin from /dev/null. Required because ssh otherwise
-  # reads from the caller's stdin, and in `main`'s `while read <<< "$clients"`
-  # loop that means ssh consumes the remaining hosts, so only the first
-  # iteration runs.
-  # Absolute path, with $HOME escaped so it expands on the remote shell, not
-  # locally: a non-interactive ssh session's PATH (/usr/bin:/bin:/usr/sbin:
-  # /sbin) does not include ~/.local/bin, where bin/install symlinks
-  # lock-guard.
-  "$ssh_cmd" -n -o BatchMode=yes \
-    -o ConnectTimeout=5 \
-    -o StrictHostKeyChecking=accept-new \
-    "$user@$host" "\$HOME/.local/bin/lock-guard" >/dev/null 2>&1 || rc=$?
-  log "client=$host user=$user ssh_exit=$rc"
+
+  if provision_host "$host" "$user"; then
+    # `-n` redirects ssh's stdin from /dev/null. Required because ssh otherwise
+    # reads from the caller's stdin, and in `main`'s `while read <<< "$clients"`
+    # loop that means ssh consumes the remaining hosts, so only the first
+    # iteration runs.
+    # Absolute path, with $HOME escaped so it expands on the remote shell, not
+    # locally: a non-interactive ssh session's PATH (/usr/bin:/bin:/usr/sbin:
+    # /sbin) does not include ~/.local/bin, where provision_host (above) just
+    # placed lock-guard on the client — no client-side bin/install needed.
+    "$ssh_cmd" -n -o BatchMode=yes \
+      -o ConnectTimeout=5 \
+      -o StrictHostKeyChecking=accept-new \
+      "$user@$host" "\$HOME/.local/bin/lock-guard" >/dev/null 2>&1 || rc=$?
+    log "client=$host user=$user ssh_exit=$rc"
+  else
+    log "client=$host user=$user warn=provision-failed"
+    "$ssh_cmd" -n -o BatchMode=yes \
+      -o ConnectTimeout=5 \
+      -o StrictHostKeyChecking=accept-new \
+      "$user@$host" "pmset displaysleepnow" >/dev/null 2>&1 || rc=$?
+    log "client=$host user=$user ssh_exit=$rc"
+  fi
 }
 
 main() {

@@ -8,6 +8,8 @@ list_clients_cmd="${LOCK_SYNC_LIST_CLIENTS:-$script_dir/list-clients}"
 # (e.g. 1Password agents). Overridable via LOCK_SYNC_SSH for tests.
 ssh_cmd="${LOCK_SYNC_SSH:-/usr/bin/ssh}"
 default_user="${USER:-$(id -un)}"
+local_lock_guard="$script_dir/lock-guard"
+shasum_cmd="${LOCK_SYNC_SHASUM:-/usr/bin/shasum}"
 
 log() {
   local ts
@@ -24,23 +26,70 @@ lookup_user() {
   ' "$conf"
 }
 
+# Ensures $host has a current copy of lock-guard at ~/.local/bin/lock-guard,
+# pushing it over SSH if missing or stale, without requiring the client to
+# ever clone this repo (see docs/plans/2026-08-12-lock-guard-remote-
+# provisioning-design.md — clients have zero footprint by design).
+# Returns 0 if the client now has (or already had) a current lock-guard.
+# Returns 1 if the checksum check or push itself failed (client
+# unreachable, etc) — callers fall back to bare pmset in that case rather
+# than attempting a lock-guard call that would fail the same way.
+provision_host() {
+  local host="$1" user="$2" local_sha remote_sha rc=0
+
+  local_sha="$("$shasum_cmd" -a 256 "$local_lock_guard" 2>/dev/null | awk '{print $1}')"
+
+  remote_sha="$("$ssh_cmd" -n -o BatchMode=yes \
+    -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=accept-new \
+    "$user@$host" 'shasum -a 256 ~/.local/bin/lock-guard 2>/dev/null' 2>/dev/null)" || rc=$?
+  if ((rc != 0)); then
+    return 1
+  fi
+  remote_sha="${remote_sha%% *}"
+
+  if [[ "$remote_sha" == "$local_sha" ]]; then
+    return 0
+  fi
+
+  "$ssh_cmd" -o BatchMode=yes \
+    -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=accept-new \
+    "$user@$host" 'mkdir -p ~/.local/bin && cat > ~/.local/bin/lock-guard && chmod +x ~/.local/bin/lock-guard' \
+    <"$local_lock_guard" >/dev/null 2>&1 || rc=$?
+  if ((rc != 0)); then
+    return 1
+  fi
+  return 0
+}
+
 fanout_host() {
   local host="$1" override user rc=0
   override=$(lookup_user "$host")
   user="${override:-$default_user}"
-  # `-n` redirects ssh's stdin from /dev/null. Required because ssh otherwise
-  # reads from the caller's stdin, and in `main`'s `while read <<< "$clients"`
-  # loop that means ssh consumes the remaining hosts, so only the first
-  # iteration runs.
-  # Absolute path, with $HOME escaped so it expands on the remote shell, not
-  # locally: a non-interactive ssh session's PATH (/usr/bin:/bin:/usr/sbin:
-  # /sbin) does not include ~/.local/bin, where bin/install symlinks
-  # lock-guard.
-  "$ssh_cmd" -n -o BatchMode=yes \
-    -o ConnectTimeout=5 \
-    -o StrictHostKeyChecking=accept-new \
-    "$user@$host" "\$HOME/.local/bin/lock-guard" >/dev/null 2>&1 || rc=$?
-  log "client=$host user=$user ssh_exit=$rc"
+
+  if provision_host "$host" "$user"; then
+    # `-n` redirects ssh's stdin from /dev/null. Required because ssh otherwise
+    # reads from the caller's stdin, and in `main`'s `while read <<< "$clients"`
+    # loop that means ssh consumes the remaining hosts, so only the first
+    # iteration runs.
+    # Absolute path, with $HOME escaped so it expands on the remote shell, not
+    # locally: a non-interactive ssh session's PATH (/usr/bin:/bin:/usr/sbin:
+    # /sbin) does not include ~/.local/bin, where bin/install symlinks
+    # lock-guard.
+    "$ssh_cmd" -n -o BatchMode=yes \
+      -o ConnectTimeout=5 \
+      -o StrictHostKeyChecking=accept-new \
+      "$user@$host" "\$HOME/.local/bin/lock-guard" >/dev/null 2>&1 || rc=$?
+    log "client=$host user=$user ssh_exit=$rc"
+  else
+    log "client=$host user=$user warn=provision-failed"
+    "$ssh_cmd" -n -o BatchMode=yes \
+      -o ConnectTimeout=5 \
+      -o StrictHostKeyChecking=accept-new \
+      "$user@$host" "pmset displaysleepnow" >/dev/null 2>&1 || rc=$?
+    log "client=$host user=$user ssh_exit=$rc"
+  fi
 }
 
 main() {

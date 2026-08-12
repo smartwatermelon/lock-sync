@@ -34,8 +34,13 @@ make_list_clients_stub() {
   chmod +x "$LOCK_SYNC_LIST_CLIENTS"
 }
 
-# Stub for ssh; records the user@host arg to SSH_LOG, exits with code from arg-match.
-# By default exits 0; set STUB_SSH_FAIL_HOST env to have that host exit 255.
+# Stub for ssh; records EVERY distinct remote command invocation to SSH_LOG
+# as "TARGET=<user@host> CMD=<remote command or stdin-marker>", one line per
+# ssh call (not just the last, since provisioning now makes multiple calls
+# per client). Exits with code from arg-match. By default exits 0; set
+# STUB_SSH_FAIL_HOST to have all calls targeting that host exit 255.
+# STUB_SSH_CHECKSUM_HOST/STUB_SSH_CHECKSUM_VALUE let a test script a
+# specific shasum stdout for a specific host's checksum-check call.
 make_ssh_stub() {
   cat >"$STUB_DIR/ssh" <<'STUBEOF'
 #!/bin/bash
@@ -50,13 +55,16 @@ for a in "$@"; do
     *) [[ -n "$target" ]] && remote_cmd="$a" ;;
   esac
 done
+stdin_marker=""
 if (( has_n == 0 )); then
-  cat >/dev/null
+  stdin_marker="STDIN=$(cat)"
 fi
-echo "TARGET=$target" >>"$SSH_LOG"
-echo "REMOTE_CMD=$remote_cmd" >>"$SSH_LOG"
+echo "TARGET=$target CMD=${remote_cmd} ${stdin_marker}" >>"$SSH_LOG"
 if [[ -n "${STUB_SSH_FAIL_HOST:-}" && "$target" == *"$STUB_SSH_FAIL_HOST"* ]]; then
   exit 255
+fi
+if [[ -n "${STUB_SSH_CHECKSUM_HOST:-}" && "$target" == *"$STUB_SSH_CHECKSUM_HOST"* && "$remote_cmd" == *shasum* ]]; then
+  echo "${STUB_SSH_CHECKSUM_VALUE:-}"
 fi
 exit 0
 STUBEOF
@@ -100,13 +108,15 @@ mimolette.local"
 
   run "$SCRIPT"
   [ "$status" -eq 0 ]
-  [ "${#lines[@]}" -eq 3 ]
+  [ "${#lines[@]}" -eq 4 ]
   [[ "${lines[0]}" == *"client=asiago.local"* ]]
   [[ "${lines[0]}" == *"ssh_exit=0"* ]]
   [[ "${lines[1]}" == *"client=tilsit.local"* ]]
-  [[ "${lines[1]}" == *"ssh_exit=255"* ]]
-  [[ "${lines[2]}" == *"client=mimolette.local"* ]]
-  [[ "${lines[2]}" == *"ssh_exit=0"* ]]
+  [[ "${lines[1]}" == *"warn=provision-failed"* ]]
+  [[ "${lines[2]}" == *"client=tilsit.local"* ]]
+  [[ "${lines[2]}" == *"ssh_exit=255"* ]]
+  [[ "${lines[3]}" == *"client=mimolette.local"* ]]
+  [[ "${lines[3]}" == *"ssh_exit=0"* ]]
 }
 
 @test "host with config override uses override user in ssh target" {
@@ -119,7 +129,7 @@ EOF
 
   run "$SCRIPT"
   [ "$status" -eq 0 ]
-  grep -q '^TARGET=adminuser@asiago.local$' "$SSH_LOG"
+  grep -q 'TARGET=adminuser@asiago.local CMD=' "$SSH_LOG"
   [[ "${lines[0]}" == *"user=adminuser"* ]]
 }
 
@@ -131,7 +141,7 @@ EOF
 
   run "$SCRIPT"
   [ "$status" -eq 0 ]
-  grep -q '^TARGET=localuser@asiago.local$' "$SSH_LOG"
+  grep -q 'TARGET=localuser@asiago.local CMD=' "$SSH_LOG"
   [[ "${lines[0]}" == *"user=localuser"* ]]
 }
 
@@ -175,8 +185,8 @@ EOF
   [[ "${lines[0]}" == *"user=admin"* ]]
   [[ "${lines[1]}" == *"client=tilsit.local"* ]]
   [[ "${lines[1]}" == *"user=defaultuser"* ]]
-  grep -q '^TARGET=admin@asiago.local$' "$SSH_LOG"
-  grep -q '^TARGET=defaultuser@tilsit.local$' "$SSH_LOG"
+  grep -q 'TARGET=admin@asiago.local CMD=' "$SSH_LOG"
+  grep -q 'TARGET=defaultuser@tilsit.local CMD=' "$SSH_LOG"
 }
 
 @test "LOCK_SYNC_SSH selects the ssh binary, bypassing PATH wrappers" {
@@ -201,9 +211,67 @@ EOF
 
 @test "remote command is lock-guard's absolute path, not a bare pmset call" {
   make_list_clients_stub "asiago.local"
+  local_sha=$(shasum -a 256 "$BATS_TEST_DIRNAME/../bin/lock-guard" | awk '{print $1}')
+  export STUB_SSH_CHECKSUM_HOST="asiago.local"
+  export STUB_SSH_CHECKSUM_VALUE="$local_sha  lock-guard"
   make_ssh_stub
 
   run "$SCRIPT"
   [ "$status" -eq 0 ]
-  grep -q '^REMOTE_CMD=\$HOME/.local/bin/lock-guard$' "$SSH_LOG"
+  grep -q 'CMD=\$HOME/.local/bin/lock-guard' "$SSH_LOG"
+}
+
+@test "provisioning: checksum mismatch pushes lock-guard content and chmods it" {
+  make_list_clients_stub "asiago.local"
+  export STUB_SSH_CHECKSUM_HOST="asiago.local"
+  export STUB_SSH_CHECKSUM_VALUE="0000000000000000000000000000000000000000000000000000000000000000  lock-guard"
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  grep -q 'TARGET=.*asiago.local CMD=.*shasum' "$SSH_LOG"
+  grep -q 'TARGET=.*asiago.local CMD=.*cat >' "$SSH_LOG"
+  grep -q "TARGET=.*asiago.local CMD=.*chmod +x" "$SSH_LOG"
+}
+
+@test "provisioning: matching checksum skips the push" {
+  make_list_clients_stub "asiago.local"
+  local_sha=$(shasum -a 256 "$BATS_TEST_DIRNAME/../bin/lock-guard" | awk '{print $1}')
+  export STUB_SSH_CHECKSUM_HOST="asiago.local"
+  export STUB_SSH_CHECKSUM_VALUE="$local_sha  lock-guard"
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  grep -q 'TARGET=.*asiago.local CMD=.*shasum' "$SSH_LOG"
+  ! grep -q 'CMD=.*cat >' "$SSH_LOG"
+}
+
+@test "provisioning failure falls back to bare pmset displaysleepnow for that client" {
+  make_list_clients_stub "asiago.local"
+  export STUB_SSH_FAIL_HOST="asiago.local"
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  grep -q 'TARGET=.*asiago.local CMD=.*pmset displaysleepnow' "$SSH_LOG"
+  [[ "${lines[0]}" == *"client=asiago.local"* ]]
+  [[ "${lines[0]}" == *"warn=provision-failed"* ]]
+
+  run grep -q 'CMD=.*\$HOME/.local/bin/lock-guard' "$SSH_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "successful provisioning still invokes lock-guard normally afterward" {
+  make_list_clients_stub "asiago.local"
+  local_sha=$(shasum -a 256 "$BATS_TEST_DIRNAME/../bin/lock-guard" | awk '{print $1}')
+  export STUB_SSH_CHECKSUM_HOST="asiago.local"
+  export STUB_SSH_CHECKSUM_VALUE="$local_sha  lock-guard"
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  grep -q 'TARGET=.*asiago.local CMD=.*\$HOME/.local/bin/lock-guard' "$SSH_LOG"
+  [[ "${lines[0]}" == *"client=asiago.local"* ]]
+  [[ "${lines[0]}" == *"ssh_exit=0"* ]]
 }

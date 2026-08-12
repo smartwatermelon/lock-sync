@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+conf="${LOCK_SYNC_GUARD_PROCESSES:-$HOME/.config/lock-sync/guard-processes}"
+pgrep_cmd="${LOCK_SYNC_PGREP:-/usr/bin/pgrep}"
+ioreg_cmd="${LOCK_SYNC_IOREG:-/usr/sbin/ioreg}"
+osascript_cmd="${LOCK_SYNC_OSASCRIPT:-/usr/bin/osascript}"
+pmset_cmd="${LOCK_SYNC_PMSET:-/usr/bin/pmset}"
+
+# osascript_cmd reserved for Task 2 (Meet detection); reference to satisfy shellcheck
+: "${osascript_cmd:?}"
+
+default_processes=("zoom.us" "Microsoft Teams" "FaceTime")
+
+log() {
+  local ts
+  ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  printf '%s %s\n' "$ts" "$*"
+}
+
+guard_processes() {
+  if [[ -r "$conf" ]]; then
+    awk '/^[[:space:]]*(#|$)/ { next } { print }' "$conf"
+  else
+    printf '%s\n' "${default_processes[@]}"
+  fi
+}
+
+# Prints the matching process name on stdout and returns 0 if any known
+# meeting process is running; returns 1 (no output) otherwise. A pgrep
+# failure for an individual name is treated as "not running", never fatal.
+check_process() {
+  local name procs
+  procs=$(guard_processes)
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    if "$pgrep_cmd" -xq "$name" 2>/dev/null; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  done <<<"$procs"
+  return 1
+}
+
+# Returns 0 if any audio engine reports a running input stream. ioreg
+# failure/unexpected output is treated as "not active", never fatal.
+check_mic_active() {
+  "$ioreg_cmd" -c IOAudioEngine -r -l 2>/dev/null \
+    | grep -q '"IOAudioEngineState" = "running"'
+}
+
+main() {
+  local match
+  if match="$(check_process)"; then
+    log "action=suppress reason=process:$match"
+    return 0
+  fi
+  if check_mic_active; then
+    log "action=suppress reason=mic-active"
+    return 0
+  fi
+  "$pmset_cmd" displaysleepnow >/dev/null 2>&1 || true
+  log "action=sleep"
+}
+
+main "$@"

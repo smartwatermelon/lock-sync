@@ -4,6 +4,7 @@ set -euo pipefail
 conf="${LOCK_SYNC_GUARD_PROCESSES:-$HOME/.config/lock-sync/guard-processes}"
 pgrep_cmd="${LOCK_SYNC_PGREP:-/usr/bin/pgrep}"
 ioreg_cmd="${LOCK_SYNC_IOREG:-/usr/sbin/ioreg}"
+osascript_cmd="${LOCK_SYNC_OSASCRIPT:-/usr/bin/osascript}"
 pmset_cmd="${LOCK_SYNC_PMSET:-/usr/bin/pmset}"
 
 default_processes=("zoom.us" "Microsoft Teams" "FaceTime")
@@ -45,6 +46,29 @@ check_mic_active() {
     | grep -q '"IOAudioEngineState" = "running"'
 }
 
+# Returns 0 if any open Chrome tab's URL matches an active Meet room
+# (meet.google.com/xxx-yyyy-zzz), as opposed to the bare landing page.
+# osascript failure (e.g. Automation permission not yet granted, or Chrome
+# not running) is treated as "no match", never fatal — see design doc's
+# "macOS Automation permission" section.
+check_meet_tab_open() {
+  local urls
+  urls="$("$osascript_cmd" -e '
+    with timeout of 3 seconds
+      tell application "Google Chrome"
+        set theURLs to {}
+        repeat with w in windows
+          repeat with t in tabs of w
+            set end of theURLs to URL of t
+          end repeat
+        end repeat
+        return theURLs
+      end tell
+    end timeout
+  ' 2>/dev/null)" || return 1
+  [[ "$urls" =~ meet\.google\.com/[a-zA-Z0-9]{3}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{3} ]]
+}
+
 main() {
   local match
   if match="$(check_process)"; then
@@ -53,6 +77,10 @@ main() {
   fi
   if check_mic_active; then
     log "action=suppress reason=mic-active"
+    return 0
+  fi
+  if check_meet_tab_open; then
+    log "action=suppress reason=meet-tab-open"
     return 0
   fi
   "$pmset_cmd" displaysleepnow >/dev/null 2>&1 || true

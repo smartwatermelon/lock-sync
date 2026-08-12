@@ -83,6 +83,14 @@ STUBEOF
   chmod +x "$STUB_DIR/osascript"
 }
 
+make_osascript_stub_meet_tab() {
+  cat >"$STUB_DIR/osascript" <<'STUBEOF'
+#!/bin/bash
+echo "https://meet.google.com/abc-defg-hij"
+STUBEOF
+  chmod +x "$STUB_DIR/osascript"
+}
+
 make_pmset_stub() {
   cat >"$STUB_DIR/pmset" <<STUBEOF
 #!/bin/bash
@@ -117,5 +125,61 @@ STUBEOF
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == *"action=suppress"* ]]
   [[ "${lines[0]}" == *"reason=mic-active"* ]]
+  [ ! -s "$PMSET_LOG" ]
+}
+
+@test "Meet tab open in Chrome: suppresses and does not call pmset" {
+  make_pgrep_stub_no_match
+  make_ioreg_stub_idle
+  make_osascript_stub_meet_tab
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == *"action=suppress"* ]]
+  [[ "${lines[0]}" == *"reason=meet-tab-open"* ]]
+  [ ! -s "$PMSET_LOG" ]
+}
+
+@test "Meet landing page open (no room code) does not suppress" {
+  make_pgrep_stub_no_match
+  make_ioreg_stub_idle
+  cat >"$STUB_DIR/osascript" <<'STUBEOF'
+#!/bin/bash
+echo "https://meet.google.com/landing"
+STUBEOF
+  chmod +x "$STUB_DIR/osascript"
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == *"action=sleep"* ]]
+  grep -q '^displaysleepnow$' "$PMSET_LOG"
+}
+
+@test "osascript failure (e.g. missing Automation permission) does not suppress or crash" {
+  make_pgrep_stub_no_match
+  make_ioreg_stub_idle
+  cat >"$STUB_DIR/osascript" <<'STUBEOF'
+#!/bin/bash
+exit 1
+STUBEOF
+  chmod +x "$STUB_DIR/osascript"
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == *"action=sleep"* ]]
+  grep -q '^displaysleepnow$' "$PMSET_LOG"
+}
+
+@test "Meet tab with mixed-case room code: suppresses and does not call pmset" {
+  make_pgrep_stub_no_match
+  make_ioreg_stub_idle
+  cat >"$STUB_DIR/osascript" <<'STUBEOF'
+#!/bin/bash
+echo "https://meet.google.com/ABC-defG-hij"
+STUBEOF
+  chmod +x "$STUB_DIR/osascript"
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == *"action=suppress"* ]]
+  [[ "${lines[0]}" == *"reason=meet-tab-open"* ]]
   [ ! -s "$PMSET_LOG" ]
 }

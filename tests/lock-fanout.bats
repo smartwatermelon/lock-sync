@@ -44,6 +44,13 @@ make_list_clients_stub() {
 # STUB_SSH_CHECKSUM_ALL_MATCH, when set, answers every host's shasum call
 # with the real local lock-guard checksum, so multi-host tests can exercise
 # the steady-state "already current, no push" path for every client at once.
+# STUB_SSH_CHECKSUM_EXIT_HOST/STUB_SSH_CHECKSUM_EXIT let a test force the
+# stub's shasum-call exit code for a specific host, independent of stdout —
+# used to simulate the real remote `shasum ... || true` behavior post-fix
+# (exit 0, empty stdout, for a missing remote file) as well as the pre-fix
+# buggy behavior (exit 1, empty stdout) that this test file's bug-fix test
+# reproduces and confirms is no longer what bin/lock-fanout's own remote
+# command string produces.
 make_ssh_stub() {
   cat >"$STUB_DIR/ssh" <<'STUBEOF'
 #!/bin/bash
@@ -71,6 +78,9 @@ if [[ -n "${STUB_SSH_CHECKSUM_ALL_MATCH:-}" && "$remote_cmd" == *shasum* ]]; the
 fi
 if [[ -n "${STUB_SSH_CHECKSUM_HOST:-}" && "$target" == *"$STUB_SSH_CHECKSUM_HOST"* && "$remote_cmd" == *shasum* ]]; then
   echo "${STUB_SSH_CHECKSUM_VALUE:-}"
+fi
+if [[ -n "${STUB_SSH_CHECKSUM_EXIT_HOST:-}" && "$target" == *"$STUB_SSH_CHECKSUM_EXIT_HOST"* && "$remote_cmd" == *shasum* ]]; then
+  exit "${STUB_SSH_CHECKSUM_EXIT:-0}"
 fi
 exit 0
 STUBEOF
@@ -255,6 +265,51 @@ EOF
   # string that's only in bin/lock-guard shows up somewhere after it.
   grep -q 'STDIN=' "$SSH_LOG"
   awk '/STDIN=/{found=1} found' "$SSH_LOG" | grep -q 'action=suppress'
+}
+
+@test "provisioning: brand-new client with no remote lock-guard gets provisioned (push, not pmset fallback)" {
+  # Reproduces the exact bug scenario: a genuinely new client's remote
+  # `shasum ~/.local/bin/lock-guard` finds no file. Post-fix, bin/lock-fanout's
+  # own remote command string ends in `|| true`, so a real client's ssh call
+  # would exit 0 with empty stdout in this situation — simulate exactly that
+  # via the stub (exit 0, no STUB_SSH_CHECKSUM_VALUE set, so stdout is empty)
+  # and confirm the client gets provisioned rather than falling back to pmset.
+  make_list_clients_stub "asiago.local"
+  export STUB_SSH_CHECKSUM_EXIT_HOST="asiago.local"
+  export STUB_SSH_CHECKSUM_EXIT=0
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" != *"warn=provision-failed"* ]]
+  grep -q 'TARGET=.*asiago.local CMD=.*shasum' "$SSH_LOG"
+  grep -q 'TARGET=.*asiago.local CMD=.*cat >' "$SSH_LOG"
+  grep -q "TARGET=.*asiago.local CMD=.*chmod +x" "$SSH_LOG"
+  grep -q "TARGET=.*asiago.local CMD=.*mv -f" "$SSH_LOG"
+
+  run grep -q 'CMD=.*pmset displaysleepnow' "$SSH_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "provisioning: pre-fix buggy behavior (remote shasum exit 1) correctly falls back to pmset" {
+  # Documents the OLD buggy remote command's behavior for contrast: if the
+  # remote checksum call exits 1 (as bin/lock-fanout's remote command did
+  # before the `|| true` fix, for a missing file), provision_host cannot
+  # distinguish that from a genuine ssh failure and correctly returns 1 —
+  # this is why the fix had to change the remote command itself rather than
+  # provision_host's exit-code handling.
+  make_list_clients_stub "asiago.local"
+  export STUB_SSH_CHECKSUM_EXIT_HOST="asiago.local"
+  export STUB_SSH_CHECKSUM_EXIT=1
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == *"warn=provision-failed"* ]]
+  grep -q 'TARGET=.*asiago.local CMD=.*pmset displaysleepnow' "$SSH_LOG"
+
+  run grep -q 'CMD=.*cat >' "$SSH_LOG"
+  [ "$status" -ne 0 ]
 }
 
 @test "provisioning: matching checksum skips the push" {

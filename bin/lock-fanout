@@ -31,9 +31,13 @@ lookup_user() {
 # ever clone this repo (see docs/plans/2026-08-12-lock-guard-remote-
 # provisioning-design.md — clients have zero footprint by design).
 # Returns 0 if the client now has (or already had) a current lock-guard.
-# Returns 1 if the checksum check or push itself failed (client
-# unreachable, etc) — callers fall back to bare pmset in that case rather
-# than attempting a lock-guard call that would fail the same way.
+# Returns 1 if the SSH session itself failed (client unreachable, auth
+# failure, timeout, etc) during the checksum check or the push — callers
+# fall back to bare pmset in that case rather than attempting a lock-guard
+# call that would fail the same way. A remote lock-guard that simply
+# doesn't exist yet (new client) is NOT treated as a failure here: it's
+# expected to fall through to the push logic (see the `|| true` comment
+# below on the checksum call for why).
 provision_host() {
   local host="$1" user="$2" local_sha remote_sha rc=0
 
@@ -58,10 +62,24 @@ provision_host() {
   # below (never regain meeting-suppression) since that log line doesn't
   # distinguish "unreachable" from "shasum missing" — a future reader
   # should know this rather than assume it's a mystery.
+  #
+  # `|| true` on the remote side is deliberate, not a swallowed error: a
+  # brand-new client that has never had lock-guard installed will have no
+  # ~/.local/bin/lock-guard, and `shasum` on a missing file exits 1 even
+  # with stderr redirected to /dev/null. Without `|| true`, that remote
+  # exit 1 becomes ssh's own exit code, which is indistinguishable here
+  # from ssh itself failing (unreachable host, auth failure, timeout) —
+  # the two would both trip `rc != 0` below and return 1, permanently
+  # stuck falling back to bare pmset and never provisioning new clients.
+  # `|| true` makes "file not found" exit 0 with empty stdout, so `rc`
+  # below reflects only "did the SSH session itself succeed" — the actual
+  # signal this function needs to decide push-vs-fallback. An empty
+  # remote_sha never equals a real local_sha, so it still falls through to
+  # the push logic exactly as a checksum mismatch would.
   remote_sha="$("$ssh_cmd" -n -o BatchMode=yes \
     -o ConnectTimeout=5 \
     -o StrictHostKeyChecking=accept-new \
-    "$user@$host" 'shasum -a 256 ~/.local/bin/lock-guard 2>/dev/null' 2>/dev/null)" || rc=$?
+    "$user@$host" 'shasum -a 256 ~/.local/bin/lock-guard 2>/dev/null || true' 2>/dev/null)" || rc=$?
   if ((rc != 0)); then
     return 1
   fi

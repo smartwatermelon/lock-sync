@@ -232,6 +232,16 @@ EOF
   grep -q 'TARGET=.*asiago.local CMD=.*shasum' "$SSH_LOG"
   grep -q 'TARGET=.*asiago.local CMD=.*cat >' "$SSH_LOG"
   grep -q "TARGET=.*asiago.local CMD=.*chmod +x" "$SSH_LOG"
+  grep -q "TARGET=.*asiago.local CMD=.*mv -f" "$SSH_LOG"
+
+  # Verify the push actually carried lock-guard's real content, not just a
+  # cat>-shaped command. The ssh stub captures stdin verbatim (embedded
+  # newlines and all) after a "STDIN=" marker, so the distinctive string
+  # lands on its own line within the captured block rather than on the
+  # "STDIN=" line itself — confirm the marker is present, then confirm a
+  # string that's only in bin/lock-guard shows up somewhere after it.
+  grep -q 'STDIN=' "$SSH_LOG"
+  awk '/STDIN=/{found=1} found' "$SSH_LOG" | grep -q 'action=suppress'
 }
 
 @test "provisioning: matching checksum skips the push" {
@@ -260,6 +270,31 @@ EOF
 
   run grep -q 'CMD=.*\$HOME/.local/bin/lock-guard' "$SSH_LOG"
   [ "$status" -ne 0 ]
+}
+
+@test "missing local lock-guard fails provisioning fast and falls back to pmset, without any ssh call" {
+  # local_lock_guard is derived from the script's own directory
+  # ($script_dir/lock-guard, via BASH_SOURCE), so to exercise the
+  # missing-file guard we run a copy of lock-fanout from an isolated bin/
+  # fixture dir that deliberately omits lock-guard, rather than touching
+  # the real bin/lock-guard in this repo.
+  FIXTURE_BIN="$TMPDIR/fixture-bin"
+  mkdir -p "$FIXTURE_BIN"
+  cp "$BATS_TEST_DIRNAME/../bin/lock-fanout" "$FIXTURE_BIN/lock-fanout"
+  # No lock-guard copied into $FIXTURE_BIN — that's the point of this test.
+
+  make_list_clients_stub "asiago.local"
+  make_ssh_stub
+
+  run "$FIXTURE_BIN/lock-fanout"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == *"client=asiago.local"* ]]
+  [[ "${lines[0]}" == *"warn=provision-failed"* ]]
+
+  # No shasum/cat/chmod ssh calls should have been attempted at all — the
+  # guard must return before any ssh invocation, not just before the push.
+  run ! grep -q 'CMD=.*shasum' "$SSH_LOG"
+  grep -q 'TARGET=.*asiago.local CMD=.*pmset displaysleepnow' "$SSH_LOG"
 }
 
 @test "successful provisioning still invokes lock-guard normally afterward" {

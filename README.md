@@ -73,17 +73,32 @@ Absent file uses the built-in default. Present file replaces it entirely
 ## Chrome Automation permission (one-time setup)
 
 `lock-guard`'s Google Meet detection requires macOS Automation permission.
-On first install, run `bin/lock-guard` interactively at a Terminal on each
-client to grant this permission:
+Clients don't need the repo cloned or `bin/install` run on them — `lock-fanout`
+pushes `lock-guard` to each client automatically over SSH the first time it
+locks that client (see "How clients get `lock-guard`" below). After that's
+happened once, grant the Automation permission by running the provisioned
+copy interactively at a Terminal on the client:
 
 ```sh
-bin/lock-guard
+~/.local/bin/lock-guard
 ```
 
 When prompted, navigate to System Settings > Privacy & Security > Automation
 and allow Terminal (or your shell's name) to automate Chrome. Without this
 permission, Meet-tab detection silently skips (the process-list and
 microphone checks still work).
+
+## How clients get `lock-guard`
+
+Clients are zero-footprint: no clone, no `bin/install`, no manual copying.
+Each time `lock-fanout` runs, it checksums the local `bin/lock-guard`
+against the copy at `~/.local/bin/lock-guard` on the client (`shasum -a
+256` over SSH) and pushes a fresh copy only if it's missing or stale,
+creating `~/.local/bin` on the client if needed. If that provisioning step
+fails for a client (unreachable, missing `shasum`, etc.), `lock-fanout`
+logs `warn=provision-failed` for that client and falls back to a bare
+`pmset displaysleepnow` call for that cycle — the client still locks, just
+without meeting-suppression until the client is reachable again.
 
 ## Verify
 
@@ -169,7 +184,7 @@ bin/
 ├── uninstall        # reverse install, preserve log
 ├── list-clients     # parse synergy.conf → <short>.local hostnames
 ├── lock-watcher     # subscribe to Darwin screen-lock notification
-├── lock-fanout      # ssh lock-guard to each client
+├── lock-fanout      # provision + ssh lock-guard to each client
 └── lock-guard       # client-side lock suppression (meeting detection)
 
 tests/               # bats test suite (`bats tests/` to run)

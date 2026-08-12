@@ -37,8 +37,27 @@ lookup_user() {
 provision_host() {
   local host="$1" user="$2" local_sha remote_sha rc=0
 
+  # Fail fast if the local lock-guard is missing/unreadable, before any
+  # shasum or ssh call. Without this guard, a missing local_lock_guard
+  # would make local_sha an empty string, which never matches a real
+  # remote_sha, so the function would still attempt the push below with
+  # stdin redirected from a nonexistent file — a risk of transferring an
+  # empty stream and leaving the client with a zero-byte-but-executable
+  # lock-guard that exits 0 without ever calling pmset (silently never
+  # locking), instead of cleanly falling back to the pmset path.
+  [[ -r "$local_lock_guard" ]] || return 1
+
   local_sha="$("$shasum_cmd" -a 256 "$local_lock_guard" 2>/dev/null | awk '{print $1}')"
 
+  # Bare `shasum` here (not $shasum_cmd) is intentional, not an oversight:
+  # $shasum_cmd/LOCK_SYNC_SHASUM is a local-machine override for tests, and
+  # the remote side is a different machine entirely — there is nothing to
+  # thread the override to. Relies on stock macOS shipping shasum at
+  # /usr/bin/shasum on the client's non-interactive SSH PATH; a client
+  # missing shasum will permanently hit the warn=provision-failed fallback
+  # below (never regain meeting-suppression) since that log line doesn't
+  # distinguish "unreachable" from "shasum missing" — a future reader
+  # should know this rather than assume it's a mystery.
   remote_sha="$("$ssh_cmd" -n -o BatchMode=yes \
     -o ConnectTimeout=5 \
     -o StrictHostKeyChecking=accept-new \
@@ -52,10 +71,17 @@ provision_host() {
     return 0
   fi
 
+  # Write to a temp file and atomically rename into place, so a truncated
+  # or dropped transfer never leaves a partial-but-executable lock-guard on
+  # the client: the client only ever has the old complete file or the new
+  # complete file, never something in between. The temp filename is a
+  # fixed literal, not generated via remote `$(mktemp)`, so this whole
+  # remote script has no `$`-expansions and no ~-in-quotes for the local
+  # shell to (mis)interpret — it's an inert remote-shell literal end to end.
   "$ssh_cmd" -o BatchMode=yes \
     -o ConnectTimeout=5 \
     -o StrictHostKeyChecking=accept-new \
-    "$user@$host" 'mkdir -p ~/.local/bin && cat > ~/.local/bin/lock-guard && chmod +x ~/.local/bin/lock-guard' \
+    "$user@$host" 'mkdir -p ~/.local/bin && cat >~/.local/bin/.lock-guard.tmp && chmod +x ~/.local/bin/.lock-guard.tmp && mv -f ~/.local/bin/.lock-guard.tmp ~/.local/bin/lock-guard' \
     <"$local_lock_guard" >/dev/null 2>&1 || rc=$?
   if ((rc != 0)); then
     return 1
@@ -75,8 +101,8 @@ fanout_host() {
     # iteration runs.
     # Absolute path, with $HOME escaped so it expands on the remote shell, not
     # locally: a non-interactive ssh session's PATH (/usr/bin:/bin:/usr/sbin:
-    # /sbin) does not include ~/.local/bin, where bin/install symlinks
-    # lock-guard.
+    # /sbin) does not include ~/.local/bin, where provision_host (above) just
+    # placed lock-guard on the client — no client-side bin/install needed.
     "$ssh_cmd" -n -o BatchMode=yes \
       -o ConnectTimeout=5 \
       -o StrictHostKeyChecking=accept-new \

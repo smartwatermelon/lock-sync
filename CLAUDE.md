@@ -47,7 +47,10 @@ All slices shipped. Install with `bin/install`; uninstall with `bin/uninstall`. 
 
 `lock-guard`'s Google Meet detection drives Chrome via `osascript`. The
 first time this runs on a client, macOS prompts for Automation permission
-(System Settings > Privacy & Security > Automation). Because `lock-guard`
+(System Settings > Privacy & Security > Automation) — this dialog appears
+on the client's own screen the moment its first lock cycle fires, even
+though `lock-guard` itself is invoked non-interactively over SSH; expect it
+on every client, not just the one set up manually. Because `lock-guard`
 runs non-interactively over SSH from launchd, there is no interactive
 session to click "Allow" in — grant this manually once per client, by
 running `~/.local/bin/lock-guard` interactively at a local Terminal on that

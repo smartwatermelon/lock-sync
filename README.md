@@ -75,9 +75,18 @@ Absent file uses the built-in default. Present file replaces it entirely
 `lock-guard`'s Google Meet detection requires macOS Automation permission.
 Clients don't need the repo cloned or `bin/install` run on them — `lock-fanout`
 pushes `lock-guard` to each client automatically over SSH the first time it
-locks that client (see "How clients get `lock-guard`" below). After that's
-happened once, grant the Automation permission by running the provisioned
-copy interactively at a Terminal on the client:
+locks that client (see "How clients get `lock-guard`" below).
+
+**Expect a permission dialog on the client's screen the first time it locks
+after being provisioned.** macOS shows the Automation permission prompt on
+the client machine itself — even though `lock-guard` is invoked
+non-interactively over SSH — the first time it tries to talk to Chrome. This
+happens automatically on every client, not just the one you set up manually.
+Until someone is at that client to click Allow, Meet-tab detection silently
+skips there (the process-list and microphone checks still work; see below).
+
+After that's happened once, grant the Automation permission by running the
+provisioned copy interactively at a Terminal on the client:
 
 ```sh
 ~/.local/bin/lock-guard

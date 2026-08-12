@@ -183,3 +183,32 @@ STUBEOF
   [[ "${lines[0]}" == *"reason=meet-tab-open"* ]]
   [ ! -s "$PMSET_LOG" ]
 }
+
+@test "custom guard-processes config replaces the default list" {
+  cat >"$TMPDIR/guard-processes" <<'EOF'
+# lock-sync guard-processes
+
+Slack Huddle
+
+# zoom.us intentionally not listed here
+EOF
+  export LOCK_SYNC_GUARD_PROCESSES="$TMPDIR/guard-processes"
+  make_pgrep_stub_match "Slack Huddle"
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == *"reason=process:Slack Huddle"* ]]
+}
+
+@test "custom guard-processes config: zoom.us not matched when absent from custom list" {
+  cat >"$TMPDIR/guard-processes" <<'EOF'
+Slack Huddle
+EOF
+  export LOCK_SYNC_GUARD_PROCESSES="$TMPDIR/guard-processes"
+  make_pgrep_stub_match "zoom.us"
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == *"action=sleep"* ]]
+  grep -q '^displaysleepnow$' "$PMSET_LOG"
+}

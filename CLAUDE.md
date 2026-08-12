@@ -62,7 +62,7 @@ and mic-active checks still work normally.
 - `bin/uninstall` — bootout the agent, remove plist and symlinks. Preserves the log file. Idempotent.
 - `bin/list-clients [path]` — slice (a). Parse Synergy conf, emit `<host>.local` hostnames, resolving real display names via the sibling `db.json` when available (see Key external inputs). No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
 - `bin/lock-watcher` — slices (b)+(c1). Subscribe to `com.apple.sessionagent.screenIsLocked`; on each event emit `<ISO-8601> locked` and invoke `bin/lock-fanout`. Blocks until signaled.
-- `bin/lock-fanout` — slice (c1). Reads hosts from `list-clients`, applies per-host overrides from `~/.config/lock-sync/config`, SSHes `pmset displaysleepnow` per host, emits one `<ISO-8601> client=<host> user=<user> ssh_exit=<rc>` line per host.
+- `bin/lock-fanout` — slice (c1). Reads hosts from `list-clients`, applies per-host overrides from `~/.config/lock-sync/config`, SSHes `lock-guard` to each client (see the `bin/lock-guard` bullet below), emits one `<ISO-8601> client=<host> user=<user> ssh_exit=<rc>` line per host.
 - `bin/lock-guard` — runs on each client (invoked remotely by `lock-fanout` in place of a bare `pmset displaysleepnow`). Skips the lock and logs why if the client looks like it's in a call: a known meeting app is running (`~/.config/lock-sync/guard-processes`), the microphone is actively in use, or a Google Meet room tab is open in Chrome. Emits `<ISO-8601> action=sleep` or `<ISO-8601> action=suppress reason=<reason>`.
 
 ## `.claude/` directory

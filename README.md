@@ -169,7 +169,7 @@ bin/
 ├── uninstall        # reverse install, preserve log
 ├── list-clients     # parse synergy.conf → <short>.local hostnames
 ├── lock-watcher     # subscribe to Darwin screen-lock notification
-├── lock-fanout      # ssh pmset displaysleepnow to each client
+├── lock-fanout      # ssh lock-guard to each client
 └── lock-guard       # client-side lock suppression (meeting detection)
 
 tests/               # bats test suite (`bats tests/` to run)

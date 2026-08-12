@@ -51,6 +51,40 @@ mimolette.local   admin
 
 Unlisted hosts fall back to `$USER`. Absent or empty file is a valid state.
 
+## Configure meeting-app suppression (optional)
+
+By default, `lock-guard` (running on each client) suppresses the lock if it
+detects `zoom.us`, `Microsoft Teams`, or `FaceTime` running. To customize
+this list, create `~/.config/lock-sync/guard-processes` (overridable via
+`LOCK_SYNC_GUARD_PROCESSES`):
+
+```text
+# ~/.config/lock-sync/guard-processes
+# one process name per line, `#` starts a line comment
+zoom.us
+Microsoft Teams
+FaceTime
+Slack
+```
+
+Absent file uses the built-in default. Present file replaces it entirely
+(not merged).
+
+## Chrome Automation permission (one-time setup)
+
+`lock-guard`'s Google Meet detection requires macOS Automation permission.
+On first install, run `bin/lock-guard` interactively at a Terminal on each
+client to grant this permission:
+
+```sh
+bin/lock-guard
+```
+
+When prompted, navigate to System Settings > Privacy & Security > Automation
+and allow Terminal (or your shell's name) to automate Chrome. Without this
+permission, Meet-tab detection silently skips (the process-list and
+microphone checks still work).
+
 ## Verify
 
 After install, lock the screen (Ctrl+Cmd+Q) and tail the log:
@@ -135,7 +169,8 @@ bin/
 ├── uninstall        # reverse install, preserve log
 ├── list-clients     # parse synergy.conf → <short>.local hostnames
 ├── lock-watcher     # subscribe to Darwin screen-lock notification
-└── lock-fanout      # ssh pmset displaysleepnow to each client
+├── lock-fanout      # ssh lock-guard to each client
+└── lock-guard       # client-side lock suppression (meeting detection)
 
 tests/               # bats test suite (`bats tests/` to run)
 docs/plans/          # per-slice design docs

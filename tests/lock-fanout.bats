@@ -39,22 +39,22 @@ make_list_clients_stub() {
 make_ssh_stub() {
   cat >"$STUB_DIR/ssh" <<'STUBEOF'
 #!/bin/bash
-# Model real ssh's stdin behavior: by default it drains stdin (eating the
-# caller's loop-reading here-string), but `-n` redirects stdin from /dev/null.
-# Without this fidelity, the stub can't distinguish the pre-fix bug from the
-# post-fix behavior.
 has_n=0
 target=""
+remote_cmd=""
 for a in "$@"; do
   case "$a" in
     -n) has_n=1 ;;
+    -o|BatchMode=yes|ConnectTimeout=5|StrictHostKeyChecking=accept-new) ;;
     *@*) target="$a" ;;
+    *) [[ -n "$target" ]] && remote_cmd="$a" ;;
   esac
 done
 if (( has_n == 0 )); then
   cat >/dev/null
 fi
 echo "TARGET=$target" >>"$SSH_LOG"
+echo "REMOTE_CMD=$remote_cmd" >>"$SSH_LOG"
 if [[ -n "${STUB_SSH_FAIL_HOST:-}" && "$target" == *"$STUB_SSH_FAIL_HOST"* ]]; then
   exit 255
 fi
@@ -197,4 +197,13 @@ EOF
   [ "$status" -eq 0 ]
   [ -f "$TMPDIR/custom-ssh.marker" ]
   [ ! -s "$SSH_LOG" ]
+}
+
+@test "remote command is lock-guard's absolute path, not a bare pmset call" {
+  make_list_clients_stub "asiago.local"
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  grep -q '^REMOTE_CMD=\$HOME/.local/bin/lock-guard$' "$SSH_LOG"
 }

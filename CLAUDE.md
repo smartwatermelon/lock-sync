@@ -31,6 +31,7 @@ SSH-to-self is a no-op on an already-locked Mac — do not special-case it.
 - **Synergy client list:** `~/Library/Preferences/Synergy/synergy.conf`. This is the source of truth for which hosts to lock — do not maintain a parallel client list.
 - **Synergy display names:** `~/Library/Preferences/Synergy/db.json` (sibling of the conf; overridable via `LOCK_SYNC_DB`). Synergy sanitizes screen names before writing the conf (e.g. it drops hyphens: `arich-mac` becomes the screen `arichmac-3181d4b4`), so the conf alone cannot reproduce a client's real hostname. `list-clients` recovers the true name from db.json's `computers[].name`, joined on the last 8 hex of `id` matching the conf's instance suffix. Read via `jq` (a soft dependency — macOS ships `/usr/bin/jq`; Homebrew paths are probed as a fallback). When jq or db.json is unavailable, it degrades to stripping the suffix. Use `name`, not `hostname` — the two diverge (`hostname` can be the default `Andrews-Mac-mini.local`).
 - **Per-client username overrides:** `~/.config/lock-sync/config` (overridable via `LOCK_SYNC_CONFIG`). Plain text, whitespace-separated `<host> <user>`, `#` line comments. Unlisted hosts use `$USER`. Absent or empty file is a valid state.
+- **Meeting-app suppression list:** `~/.config/lock-sync/guard-processes` (overridable via `LOCK_SYNC_GUARD_PROCESSES`). Same shape as the username-override config: plain text, one process name per line, `#` comments. Absent file uses the built-in default list (`zoom.us`, `Microsoft Teams`, `FaceTime`). Present file replaces the default list entirely (not merged).
 
 ## Runtime
 
@@ -40,6 +41,21 @@ Bash, shellcheck-clean (project follows the user's global bash standards in `~/.
 
 All slices shipped. Install with `bin/install`; uninstall with `bin/uninstall`. The LaunchAgent auto-starts the watcher on login and writes its log to `~/Library/Logs/lock-sync.log`. Per-slice design docs live under `docs/plans/`.
 
+**Upgrade path:** every machine acting as a Synergy client is a symmetric peer, not just the primary/server — `bin/install` must be re-run on EVERY client machine when upgrading, not only on the machine you're actively developing on. `lock-fanout` invokes `lock-guard` on each client via the absolute path `$HOME/.local/bin/lock-guard`, which only exists once `bin/install` has symlinked it there. Skipping install on any client leaves `lock-guard` missing on that client, and locking fails for it (ssh_exit=127 / command-not-found) until install is re-run there.
+
+## lock-guard: one-time Chrome Automation permission
+
+`lock-guard`'s Google Meet detection drives Chrome via `osascript`. The
+first time this runs on a client, macOS prompts for Automation permission
+(System Settings > Privacy & Security > Automation). Because `lock-guard`
+runs non-interactively over SSH from launchd, there is no interactive
+session to click "Allow" in — grant this manually once per client, by
+running `bin/lock-guard` interactively at a local Terminal on that client
+after install, approving the Chrome automation prompt when it appears. If
+the permission is never granted, Meet-tab detection silently fails open
+(treated as "no Meet tab found," never as a fatal error) — the process-list
+and mic-active checks still work normally.
+
 ## Commands
 
 - `bats tests/` — run the test suite. Local: `brew install bats-core`. CI: installs bats-core v1.10.0 from source to `$HOME/.local` (see `.github/workflows/ci.yml`).
@@ -48,7 +64,8 @@ All slices shipped. Install with `bin/install`; uninstall with `bin/uninstall`. 
 - `bin/uninstall` — bootout the agent, remove plist and symlinks. Preserves the log file. Idempotent.
 - `bin/list-clients [path]` — slice (a). Parse Synergy conf, emit `<host>.local` hostnames, resolving real display names via the sibling `db.json` when available (see Key external inputs). No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
 - `bin/lock-watcher` — slices (b)+(c1). Subscribe to `com.apple.sessionagent.screenIsLocked`; on each event emit `<ISO-8601> locked` and invoke `bin/lock-fanout`. Blocks until signaled.
-- `bin/lock-fanout` — slice (c1). Reads hosts from `list-clients`, applies per-host overrides from `~/.config/lock-sync/config`, SSHes `pmset displaysleepnow` per host, emits one `<ISO-8601> client=<host> user=<user> ssh_exit=<rc>` line per host.
+- `bin/lock-fanout` — slice (c1). Reads hosts from `list-clients`, applies per-host overrides from `~/.config/lock-sync/config`, SSHes `lock-guard` to each client (see the `bin/lock-guard` bullet below), emits one `<ISO-8601> client=<host> user=<user> ssh_exit=<rc>` line per host.
+- `bin/lock-guard` — runs on each client (invoked remotely by `lock-fanout` in place of a bare `pmset displaysleepnow`). Skips the lock and logs why if the client looks like it's in a call: a known meeting app is running (`~/.config/lock-sync/guard-processes`), the microphone is actively in use, or a Google Meet room tab is open in Chrome. Emits `<ISO-8601> action=sleep` or `<ISO-8601> action=suppress reason=<reason>`.
 
 ## `.claude/` directory
 

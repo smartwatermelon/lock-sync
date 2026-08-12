@@ -32,10 +32,14 @@ fanout_host() {
   # reads from the caller's stdin, and in `main`'s `while read <<< "$clients"`
   # loop that means ssh consumes the remaining hosts, so only the first
   # iteration runs.
+  # Absolute path, with $HOME escaped so it expands on the remote shell, not
+  # locally: a non-interactive ssh session's PATH (/usr/bin:/bin:/usr/sbin:
+  # /sbin) does not include ~/.local/bin, where bin/install symlinks
+  # lock-guard.
   "$ssh_cmd" -n -o BatchMode=yes \
     -o ConnectTimeout=5 \
     -o StrictHostKeyChecking=accept-new \
-    "$user@$host" pmset displaysleepnow >/dev/null 2>&1 || rc=$?
+    "$user@$host" "\$HOME/.local/bin/lock-guard" >/dev/null 2>&1 || rc=$?
   log "client=$host user=$user ssh_exit=$rc"
 }
 

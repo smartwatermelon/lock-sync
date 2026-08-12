@@ -14,7 +14,7 @@ say() { printf 'install: %s\n' "$*"; }
 
 mkdir -p "$bin_dir" "$plist_dir" "$(dirname "$log_path")"
 
-for b in lock-watcher lock-fanout list-clients; do
+for b in lock-watcher lock-fanout list-clients lock-guard; do
   ln -sf "$repo_root/bin/$b" "$bin_dir/$b"
   say "symlinked $bin_dir/$b -> $repo_root/bin/$b"
 done

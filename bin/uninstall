@@ -15,7 +15,7 @@ if [[ -f "$plist_path" ]]; then
   say "removed $plist_path"
 fi
 
-for b in lock-watcher lock-fanout list-clients; do
+for b in lock-watcher lock-fanout list-clients lock-guard; do
   if [[ -L "$bin_dir/$b" ]]; then
     rm "$bin_dir/$b"
     say "removed $bin_dir/$b"

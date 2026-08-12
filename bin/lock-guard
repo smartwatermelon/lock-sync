@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+conf="${LOCK_SYNC_GUARD_PROCESSES:-$HOME/.config/lock-sync/guard-processes}"
+pgrep_cmd="${LOCK_SYNC_PGREP:-/usr/bin/pgrep}"
+osascript_cmd="${LOCK_SYNC_OSASCRIPT:-/usr/bin/osascript}"
+pmset_cmd="${LOCK_SYNC_PMSET:-/usr/bin/pmset}"
+
+default_processes=("zoom.us" "Microsoft Teams" "FaceTime")
+
+log() {
+  local ts
+  ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  printf '%s %s\n' "$ts" "$*"
+}
+
+guard_processes() {
+  if [[ -r "$conf" ]]; then
+    awk '/^[[:space:]]*(#|$)/ { next } { gsub(/[[:space:]]+$|\r$/, ""); if ($0 != "") print }' "$conf"
+  else
+    printf '%s\n' "${default_processes[@]}"
+  fi
+}
+
+# Prints the matching process name on stdout and returns 0 if any known
+# meeting process is running; returns 1 (no output) otherwise. A pgrep
+# failure for an individual name is treated as "not running", never fatal.
+check_process() {
+  local name procs
+  # Captured to a variable (not process-substituted) because this function's
+  # own stdout is captured by the caller via $(check_process).
+  procs=$(guard_processes)
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    if "$pgrep_cmd" -xq "$name" 2>/dev/null; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  done <<<"$procs"
+  return 1
+}
+
+# Returns 0 if coreaudiod currently holds a PreventUserIdleSystemSleep power
+# assertion, which it takes for the exact duration any process has an active
+# audio input stream open. Verified against real mic open/close on Apple
+# Silicon; IOAudioEngine (the previous approach) is a legacy Intel/kext-era
+# IOKit class with zero live instances under the modern Core Audio HAL.
+# pmset failure/unexpected output is treated as "not active", never fatal.
+check_mic_active() {
+  "$pmset_cmd" -g assertions 2>/dev/null \
+    | grep -qi 'coreaudiod.*preventuseridlesleep'
+}
+
+# Returns 0 if any open Chrome tab's URL matches an active Meet room
+# (meet.google.com/xxx-yyyy-zzz), as opposed to the bare landing page.
+# osascript failure (e.g. Automation permission not yet granted, or Chrome
+# not running) is treated as "no match", never fatal — see design doc's
+# "macOS Automation permission" section.
+check_meet_tab_open() {
+  local urls
+  urls="$("$osascript_cmd" -e '
+    with timeout of 3 seconds
+      tell application "Google Chrome"
+        set theURLs to {}
+        repeat with w in windows
+          repeat with t in tabs of w
+            set end of theURLs to URL of t
+          end repeat
+        end repeat
+        return theURLs
+      end tell
+    end timeout
+  ' 2>/dev/null)" || return 1
+  [[ "$urls" =~ https://meet\.google\.com/[a-zA-Z0-9]{3}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{3} ]]
+}
+
+main() {
+  local match
+  if match="$(check_process)"; then
+    log "action=suppress reason=process:$match"
+    return 0
+  fi
+  if check_mic_active; then
+    log "action=suppress reason=mic-active"
+    return 0
+  fi
+  if check_meet_tab_open; then
+    log "action=suppress reason=meet-tab-open"
+    return 0
+  fi
+  "$pmset_cmd" displaysleepnow >/dev/null 2>&1 || true
+  log "action=sleep"
+}
+
+main "$@"

@@ -47,6 +47,7 @@ teardown() {
   [ -L "$bin_dir/lock-watcher" ]
   [ -L "$bin_dir/lock-fanout" ]
   [ -L "$bin_dir/list-clients" ]
+  [ -L "$bin_dir/lock-guard" ]
   [ -f "$plist_path" ]
   [ -d "$(dirname "$log_path")" ]
 
@@ -97,6 +98,7 @@ teardown() {
   [ ! -L "$bin_dir/lock-watcher" ]
   [ ! -L "$bin_dir/lock-fanout" ]
   [ ! -L "$bin_dir/list-clients" ]
+  [ ! -L "$bin_dir/lock-guard" ]
   grep -q "^bootout gui/$(id -u)/$LABEL\$" "$LAUNCHCTL_LOG"
 }
 

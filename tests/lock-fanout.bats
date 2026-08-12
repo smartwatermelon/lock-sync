@@ -108,7 +108,8 @@ mimolette.local"
   # Steady state: every checksum already matches, so no push (cat/chmod/mv)
   # should have been attempted for any client — this is the case this test
   # exists to cover, distinct from the dedicated push tests below.
-  ! grep -q 'CMD=.*cat >' "$SSH_LOG"
+  run grep -q 'CMD=.*cat >' "$SSH_LOG"
+  [ "$status" -ne 0 ]
 }
 
 @test "one of three ssh failures still exits 0 with mixed log lines" {
@@ -305,7 +306,8 @@ EOF
 
   # No shasum/cat/chmod ssh calls should have been attempted at all — the
   # guard must return before any ssh invocation, not just before the push.
-  run ! grep -q 'CMD=.*shasum' "$SSH_LOG"
+  run grep -q 'CMD=.*shasum' "$SSH_LOG"
+  [ "$status" -ne 0 ]
   grep -q 'TARGET=.*asiago.local CMD=.*pmset displaysleepnow' "$SSH_LOG"
 }
 

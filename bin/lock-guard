@@ -4,11 +4,7 @@ set -euo pipefail
 conf="${LOCK_SYNC_GUARD_PROCESSES:-$HOME/.config/lock-sync/guard-processes}"
 pgrep_cmd="${LOCK_SYNC_PGREP:-/usr/bin/pgrep}"
 ioreg_cmd="${LOCK_SYNC_IOREG:-/usr/sbin/ioreg}"
-osascript_cmd="${LOCK_SYNC_OSASCRIPT:-/usr/bin/osascript}"
 pmset_cmd="${LOCK_SYNC_PMSET:-/usr/bin/pmset}"
-
-# osascript_cmd reserved for Task 2 (Meet detection); reference to satisfy shellcheck
-: "${osascript_cmd:?}"
 
 default_processes=("zoom.us" "Microsoft Teams" "FaceTime")
 

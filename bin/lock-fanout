@@ -35,7 +35,7 @@ fanout_host() {
   "$ssh_cmd" -n -o BatchMode=yes \
     -o ConnectTimeout=5 \
     -o StrictHostKeyChecking=accept-new \
-    "$user@$host" pmset displaysleepnow >/dev/null 2>&1 || rc=$?
+    "$user@$host" lock-guard >/dev/null 2>&1 || rc=$?
   log "client=$host user=$user ssh_exit=$rc"
 }
 

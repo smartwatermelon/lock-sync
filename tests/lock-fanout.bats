@@ -41,6 +41,9 @@ make_list_clients_stub() {
 # STUB_SSH_FAIL_HOST to have all calls targeting that host exit 255.
 # STUB_SSH_CHECKSUM_HOST/STUB_SSH_CHECKSUM_VALUE let a test script a
 # specific shasum stdout for a specific host's checksum-check call.
+# STUB_SSH_CHECKSUM_ALL_MATCH, when set, answers every host's shasum call
+# with the real local lock-guard checksum, so multi-host tests can exercise
+# the steady-state "already current, no push" path for every client at once.
 make_ssh_stub() {
   cat >"$STUB_DIR/ssh" <<'STUBEOF'
 #!/bin/bash
@@ -62,6 +65,9 @@ fi
 echo "TARGET=$target CMD=${remote_cmd} ${stdin_marker}" >>"$SSH_LOG"
 if [[ -n "${STUB_SSH_FAIL_HOST:-}" && "$target" == *"$STUB_SSH_FAIL_HOST"* ]]; then
   exit 255
+fi
+if [[ -n "${STUB_SSH_CHECKSUM_ALL_MATCH:-}" && "$remote_cmd" == *shasum* ]]; then
+  echo "${STUB_SSH_CHECKSUM_ALL_MATCH}  lock-guard"
 fi
 if [[ -n "${STUB_SSH_CHECKSUM_HOST:-}" && "$target" == *"$STUB_SSH_CHECKSUM_HOST"* && "$remote_cmd" == *shasum* ]]; then
   echo "${STUB_SSH_CHECKSUM_VALUE:-}"
@@ -86,6 +92,8 @@ STUBEOF
   make_list_clients_stub "asiago.local
 tilsit.local
 mimolette.local"
+  local_sha=$(shasum -a 256 "$BATS_TEST_DIRNAME/../bin/lock-guard" | awk '{print $1}')
+  export STUB_SSH_CHECKSUM_ALL_MATCH="$local_sha"
   make_ssh_stub
 
   run "$SCRIPT"
@@ -97,6 +105,10 @@ mimolette.local"
   [[ "${lines[1]}" == *"ssh_exit=0"* ]]
   [[ "${lines[2]}" == *"client=mimolette.local"* ]]
   [[ "${lines[2]}" == *"ssh_exit=0"* ]]
+  # Steady state: every checksum already matches, so no push (cat/chmod/mv)
+  # should have been attempted for any client — this is the case this test
+  # exists to cover, distinct from the dedicated push tests below.
+  ! grep -q 'CMD=.*cat >' "$SSH_LOG"
 }
 
 @test "one of three ssh failures still exits 0 with mixed log lines" {

@@ -3,7 +3,6 @@ set -euo pipefail
 
 conf="${LOCK_SYNC_GUARD_PROCESSES:-$HOME/.config/lock-sync/guard-processes}"
 pgrep_cmd="${LOCK_SYNC_PGREP:-/usr/bin/pgrep}"
-ioreg_cmd="${LOCK_SYNC_IOREG:-/usr/sbin/ioreg}"
 osascript_cmd="${LOCK_SYNC_OSASCRIPT:-/usr/bin/osascript}"
 pmset_cmd="${LOCK_SYNC_PMSET:-/usr/bin/pmset}"
 
@@ -17,7 +16,7 @@ log() {
 
 guard_processes() {
   if [[ -r "$conf" ]]; then
-    awk '/^[[:space:]]*(#|$)/ { next } { print }' "$conf"
+    awk '/^[[:space:]]*(#|$)/ { next } { gsub(/[[:space:]]+$|\r$/, ""); if ($0 != "") print }' "$conf"
   else
     printf '%s\n' "${default_processes[@]}"
   fi
@@ -28,6 +27,8 @@ guard_processes() {
 # failure for an individual name is treated as "not running", never fatal.
 check_process() {
   local name procs
+  # Captured to a variable (not process-substituted) because this function's
+  # own stdout is captured by the caller via $(check_process).
   procs=$(guard_processes)
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
@@ -39,11 +40,15 @@ check_process() {
   return 1
 }
 
-# Returns 0 if any audio engine reports a running input stream. ioreg
-# failure/unexpected output is treated as "not active", never fatal.
+# Returns 0 if coreaudiod currently holds a PreventUserIdleSystemSleep power
+# assertion, which it takes for the exact duration any process has an active
+# audio input stream open. Verified against real mic open/close on Apple
+# Silicon; IOAudioEngine (the previous approach) is a legacy Intel/kext-era
+# IOKit class with zero live instances under the modern Core Audio HAL.
+# pmset failure/unexpected output is treated as "not active", never fatal.
 check_mic_active() {
-  "$ioreg_cmd" -c IOAudioEngine -r -l 2>/dev/null \
-    | grep -q '"IOAudioEngineState" = "running"'
+  "$pmset_cmd" -g assertions 2>/dev/null \
+    | grep -qi 'coreaudiod.*preventuseridlesleep'
 }
 
 # Returns 0 if any open Chrome tab's URL matches an active Meet room
@@ -66,7 +71,7 @@ check_meet_tab_open() {
       end tell
     end timeout
   ' 2>/dev/null)" || return 1
-  [[ "$urls" =~ meet\.google\.com/[a-zA-Z0-9]{3}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{3} ]]
+  [[ "$urls" =~ https://meet\.google\.com/[a-zA-Z0-9]{3}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{3} ]]
 }
 
 main() {

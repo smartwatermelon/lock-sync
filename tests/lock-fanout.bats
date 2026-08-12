@@ -199,11 +199,11 @@ EOF
   [ ! -s "$SSH_LOG" ]
 }
 
-@test "remote command is lock-guard, not a bare pmset call" {
+@test "remote command is lock-guard's absolute path, not a bare pmset call" {
   make_list_clients_stub "asiago.local"
   make_ssh_stub
 
   run "$SCRIPT"
   [ "$status" -eq 0 ]
-  grep -q '^REMOTE_CMD=lock-guard$' "$SSH_LOG"
+  grep -q '^REMOTE_CMD=\$HOME/.local/bin/lock-guard$' "$SSH_LOG"
 }

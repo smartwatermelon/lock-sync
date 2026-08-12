@@ -41,6 +41,8 @@ Bash, shellcheck-clean (project follows the user's global bash standards in `~/.
 
 All slices shipped. Install with `bin/install`; uninstall with `bin/uninstall`. The LaunchAgent auto-starts the watcher on login and writes its log to `~/Library/Logs/lock-sync.log`. Per-slice design docs live under `docs/plans/`.
 
+**Upgrade path:** every machine acting as a Synergy client is a symmetric peer, not just the primary/server — `bin/install` must be re-run on EVERY client machine when upgrading, not only on the machine you're actively developing on. `lock-fanout` invokes `lock-guard` on each client via the absolute path `$HOME/.local/bin/lock-guard`, which only exists once `bin/install` has symlinked it there. Skipping install on any client leaves `lock-guard` missing on that client, and locking fails for it (ssh_exit=127 / command-not-found) until install is re-run there.
+
 ## lock-guard: one-time Chrome Automation permission
 
 `lock-guard`'s Google Meet detection drives Chrome via `osascript`. The

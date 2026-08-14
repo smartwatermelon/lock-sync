@@ -105,9 +105,13 @@ against the copy at `~/.local/bin/lock-guard` on the client (`shasum -a
 256` over SSH) and pushes a fresh copy only if it's missing or stale,
 creating `~/.local/bin` on the client if needed. If that provisioning step
 fails for a client (unreachable, missing `shasum`, etc.), `lock-fanout`
-logs `warn=provision-failed` for that client and falls back to a bare
-`pmset displaysleepnow` call for that cycle — the client still locks, just
-without meeting-suppression until the client is reachable again.
+logs `warn=provision-failed reason=<missing-local-lock-guard|ssh-failed>`
+(with `ssh_exit=<rc>` appended for the `ssh-failed` case) for that client
+and falls back to a bare `pmset displaysleepnow` call for that cycle — the
+client still locks, just without meeting-suppression until the client is
+reachable again. The controller itself is always skipped in fan-out
+(`warn=skip-self`), since it appears in its own Synergy client list but an
+SSH round-trip to itself would achieve nothing a local lock doesn't.
 
 ## Verify
 

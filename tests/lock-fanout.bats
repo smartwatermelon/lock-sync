@@ -16,6 +16,24 @@ setup() {
   SSH_LOG="$TMPDIR/ssh.log"
   export SSH_LOG
   export LOCK_SYNC_SSH="$STUB_DIR/ssh"
+  # Pin the "local host" identity used by the self-exclusion check to a
+  # fixed, non-matching value by default, so existing tests (none of whose
+  # client lists are meant to collide with the real test-runner's hostname)
+  # don't accidentally skip a host because the CI/dev machine happens to be
+  # named the same as a fixture client. Tests targeting self-exclusion
+  # override this to a hostname that does match one of their fixture hosts.
+  make_hostname_stub "no-such-controller-host"
+}
+
+# Stub for hostname -s; echoes the given short name.
+make_hostname_stub() {
+  local short_name="$1"
+  cat >"$STUB_DIR/hostname-stub" <<EOF
+#!/bin/bash
+echo "$short_name"
+EOF
+  chmod +x "$STUB_DIR/hostname-stub"
+  export LOCK_SYNC_HOSTNAME="$STUB_DIR/hostname-stub"
 }
 
 teardown() {
@@ -62,7 +80,15 @@ for a in "$@"; do
     -n) has_n=1 ;;
     -o|BatchMode=yes|ConnectTimeout=5|StrictHostKeyChecking=accept-new) ;;
     *@*) target="$a" ;;
-    *) [[ -n "$target" ]] && remote_cmd="$a" ;;
+    *)
+      if [[ -n "$target" ]]; then
+        if [[ -n "$remote_cmd" ]]; then
+          remote_cmd="$remote_cmd $a"
+        else
+          remote_cmd="$a"
+        fi
+      fi
+      ;;
   esac
 done
 stdin_marker=""
@@ -378,4 +404,110 @@ EOF
   grep -q 'TARGET=.*asiago.local CMD=.*\$HOME/.local/bin/lock-guard' "$SSH_LOG"
   [[ "${lines[0]}" == *"client=asiago.local"* ]]
   [[ "${lines[0]}" == *"ssh_exit=0"* ]]
+}
+
+# --- Issue #27: self-exclusion ---
+
+@test "self-exclusion: client list including the local hostname is filtered out of fan-out, others unaffected" {
+  make_list_clients_stub "asiago.local
+tilsit.local
+mimolette.local"
+  make_hostname_stub "asiago"
+  local_sha=$(shasum -a 256 "$BATS_TEST_DIRNAME/../bin/lock-guard" | awk '{print $1}')
+  export STUB_SSH_CHECKSUM_ALL_MATCH="$local_sha"
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 3 ]
+  [[ "${lines[0]}" == *"client=asiago.local"* ]]
+  [[ "${lines[0]}" == *"warn=skip-self"* ]]
+  [[ "${lines[1]}" == *"client=tilsit.local"* ]]
+  [[ "${lines[1]}" == *"ssh_exit=0"* ]]
+  [[ "${lines[2]}" == *"client=mimolette.local"* ]]
+  [[ "${lines[2]}" == *"ssh_exit=0"* ]]
+
+  # No ssh call should ever target asiago.local — the skip happens before
+  # any ssh invocation, not just before the final lock-guard call.
+  run grep -q 'TARGET=.*asiago.local' "$SSH_LOG"
+  [ "$status" -ne 0 ]
+  grep -q 'TARGET=.*tilsit.local' "$SSH_LOG"
+  grep -q 'TARGET=.*mimolette.local' "$SSH_LOG"
+}
+
+@test "self-exclusion: hostname comparison is case-insensitive" {
+  make_list_clients_stub "asiago.local"
+  make_hostname_stub "ASIAGO"
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == *"client=asiago.local"* ]]
+  [[ "${lines[0]}" == *"warn=skip-self"* ]]
+  [ ! -s "$SSH_LOG" ]
+}
+
+@test "self-exclusion: no client matches local hostname, all clients proceed normally" {
+  make_list_clients_stub "tilsit.local
+mimolette.local"
+  make_hostname_stub "asiago"
+  local_sha=$(shasum -a 256 "$BATS_TEST_DIRNAME/../bin/lock-guard" | awk '{print $1}')
+  export STUB_SSH_CHECKSUM_ALL_MATCH="$local_sha"
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == *"client=tilsit.local"* ]]
+  [[ "${lines[0]}" == *"ssh_exit=0"* ]]
+  [[ "${lines[1]}" == *"client=mimolette.local"* ]]
+  [[ "${lines[1]}" == *"ssh_exit=0"* ]]
+
+  run grep -q 'warn=skip-self' <<<"$output"
+  [ "$status" -ne 0 ]
+}
+
+# --- Issue #28: ssh stub multi-arg remote-command capture ---
+
+@test "ssh stub regression: multiple trailing positional args after user@host are all captured, not just the last" {
+  make_ssh_stub
+  "$STUB_DIR/ssh" -o BatchMode=yes user@host.local "pmset" "displaysleepnow" "extra-arg" >/dev/null
+  grep -q 'TARGET=user@host.local CMD=pmset displaysleepnow extra-arg' "$SSH_LOG"
+}
+
+# --- Issue #29: provision-failed reason distinction ---
+
+@test "provision-failed reason: ssh failure during checksum check logs reason=ssh-failed and the ssh exit code" {
+  make_list_clients_stub "asiago.local"
+  export STUB_SSH_FAIL_HOST="asiago.local"
+  make_ssh_stub
+
+  run "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == *"client=asiago.local"* ]]
+  [[ "${lines[0]}" == *"warn=provision-failed"* ]]
+  [[ "${lines[0]}" == *"reason=ssh-failed"* ]]
+  [[ "${lines[0]}" == *"ssh_exit=255"* ]]
+}
+
+@test "provision-failed reason: missing local lock-guard logs reason=missing-local-lock-guard with no ssh_exit field" {
+  FIXTURE_BIN="$TMPDIR/fixture-bin"
+  mkdir -p "$FIXTURE_BIN"
+  cp "$BATS_TEST_DIRNAME/../bin/lock-fanout" "$FIXTURE_BIN/lock-fanout"
+  # No lock-guard copied into $FIXTURE_BIN — that's the point of this test.
+
+  make_list_clients_stub "asiago.local"
+  make_ssh_stub
+
+  run "$FIXTURE_BIN/lock-fanout"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == *"client=asiago.local"* ]]
+  [[ "${lines[0]}" == *"warn=provision-failed"* ]]
+  [[ "${lines[0]}" == *"reason=missing-local-lock-guard"* ]]
+  # No ssh_exit field on the provision-failed line itself: no ssh call ever
+  # happened for the checksum/push step in this guard-clause case, so there
+  # is no real ssh exit code to report here (distinct from the fallback
+  # pmset line immediately after, which does have its own ssh_exit=).
+  [[ "${lines[0]}" != *"ssh_exit="* ]]
 }

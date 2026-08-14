@@ -24,7 +24,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - `ssh [user@]client pmset displaysleepnow`.
    - Log exit status per client.
 
-SSH-to-self is a no-op on an already-locked Mac — do not special-case it.
+SSH-to-self is a no-op on an already-locked Mac; the *lock* itself never needs
+special-casing. `lock-fanout` does, however, skip the controller entirely when
+it appears in its own Synergy client list (`warn=skip-self`), since the SSH
+round-trip to reach that same no-op achieves nothing a local invocation
+wouldn't (see issue #27).
 
 ## Key external inputs
 
@@ -69,7 +73,7 @@ and mic-active checks still work normally.
 - `bin/uninstall` — bootout the agent, remove plist and symlinks. Preserves the log file. Idempotent.
 - `bin/list-clients [path]` — slice (a). Parse Synergy conf, emit `<host>.local` hostnames, resolving real display names via the sibling `db.json` when available (see Key external inputs). No arg → reads `~/Library/Preferences/Synergy/synergy.conf`.
 - `bin/lock-watcher` — slices (b)+(c1). Subscribe to `com.apple.sessionagent.screenIsLocked`; on each event emit `<ISO-8601> locked` and invoke `bin/lock-fanout`. Blocks until signaled.
-- `bin/lock-fanout` — slice (c1). Reads hosts from `list-clients`, applies per-host overrides from `~/.config/lock-sync/config`, provisions `lock-guard` on each client on demand over SSH if missing or stale (checksum-compared; see "Upgrade path" above), then SSHes `lock-guard` to each client (see the `bin/lock-guard` bullet below; falls back to bare `pmset displaysleepnow` if provisioning fails), emits one `<ISO-8601> client=<host> user=<user> ssh_exit=<rc>` line per host (plus a `warn=provision-failed` line when provisioning itself failed for that host).
+- `bin/lock-fanout` — slice (c1). Reads hosts from `list-clients`, skips any host that resolves to the controller itself (case-insensitive match against `hostname -s` + `.local`; logs `client=<host> warn=skip-self` and moves on — see issue #27), applies per-host overrides from `~/.config/lock-sync/config`, provisions `lock-guard` on each client on demand over SSH if missing or stale (checksum-compared; see "Upgrade path" above), then SSHes `lock-guard` to each client (see the `bin/lock-guard` bullet below; falls back to bare `pmset displaysleepnow` if provisioning fails), emits one `<ISO-8601> client=<host> user=<user> ssh_exit=<rc>` line per host (plus a `warn=provision-failed reason=<missing-local-lock-guard|ssh-failed>` line, with `ssh_exit=<rc>` appended when the reason is `ssh-failed`, when provisioning itself failed for that host).
 - `bin/lock-guard` — runs on each client (invoked remotely by `lock-fanout` in place of a bare `pmset displaysleepnow`). Skips the lock and logs why if the client looks like it's in a call: a known meeting app is running (`~/.config/lock-sync/guard-processes`), the microphone is actively in use, or a Google Meet room tab is open in Chrome. Emits `<ISO-8601> action=sleep` or `<ISO-8601> action=suppress reason=<reason>`.
 
 ## `.claude/` directory

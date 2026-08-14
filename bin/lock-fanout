@@ -10,6 +10,13 @@ ssh_cmd="${LOCK_SYNC_SSH:-/usr/bin/ssh}"
 default_user="${USER:-$(id -un)}"
 local_lock_guard="$script_dir/lock-guard"
 shasum_cmd="${LOCK_SYNC_SHASUM:-/usr/bin/shasum}"
+hostname_cmd="${LOCK_SYNC_HOSTNAME:-/bin/hostname}"
+# list-clients emits lowercased <name>.local hostnames (see resolve() there);
+# match that shape here so a controller that's also a member of its own
+# Synergy client list compares equal to itself and gets skipped below,
+# rather than SSHing to itself for no benefit (see fanout_host's is-self
+# check). Lowercased for the same case-insensitive-match reason.
+local_host="$("$hostname_cmd" -s 2>/dev/null | tr '[:upper:]' '[:lower:]').local"
 
 log() {
   local ts
@@ -38,8 +45,25 @@ lookup_user() {
 # doesn't exist yet (new client) is NOT treated as a failure here: it's
 # expected to fall through to the push logic (see the `|| true` comment
 # below on the checksum call for why).
+#
+# On failure (return 1), also sets the caller-visible globals
+# provision_fail_reason (a short machine-readable tag: "missing-local-
+# lock-guard" or "ssh-failed") and provision_fail_rc (the ssh exit code,
+# only meaningful when reason is "ssh-failed" — left at 0 for the
+# missing-local-file guard clause, since no ssh call happens in that case).
+# Globals rather than stdout/return-code-per-class: fanout_host already
+# reads provision_host's success/failure via `if provision_host ...; then`,
+# and threading a second signal through return code or stdout would either
+# collide with that boolean or require capturing stdout on every call site,
+# including the common-case success path. Reset at the top of every call so
+# a stale reason from a prior host can never leak into this host's log line.
+provision_fail_reason=""
+provision_fail_rc=0
+
 provision_host() {
   local host="$1" user="$2" local_sha remote_sha rc=0
+  provision_fail_reason=""
+  provision_fail_rc=0
 
   # Fail fast if the local lock-guard is missing/unreadable, before any
   # shasum or ssh call. Without this guard, a missing local_lock_guard
@@ -49,7 +73,10 @@ provision_host() {
   # empty stream and leaving the client with a zero-byte-but-executable
   # lock-guard that exits 0 without ever calling pmset (silently never
   # locking), instead of cleanly falling back to the pmset path.
-  [[ -r "$local_lock_guard" ]] || return 1
+  if [[ ! -r "$local_lock_guard" ]]; then
+    provision_fail_reason="missing-local-lock-guard"
+    return 1
+  fi
 
   local_sha="$("$shasum_cmd" -a 256 "$local_lock_guard" 2>/dev/null | awk '{print $1}')"
 
@@ -81,6 +108,8 @@ provision_host() {
     -o StrictHostKeyChecking=accept-new \
     "$user@$host" 'shasum -a 256 ~/.local/bin/lock-guard 2>/dev/null || true' 2>/dev/null)" || rc=$?
   if ((rc != 0)); then
+    provision_fail_reason="ssh-failed"
+    provision_fail_rc=$rc
     return 1
   fi
   remote_sha="${remote_sha%% *}"
@@ -102,13 +131,30 @@ provision_host() {
     "$user@$host" 'mkdir -p ~/.local/bin && cat >~/.local/bin/.lock-guard.tmp && chmod +x ~/.local/bin/.lock-guard.tmp && mv -f ~/.local/bin/.lock-guard.tmp ~/.local/bin/lock-guard' \
     <"$local_lock_guard" >/dev/null 2>&1 || rc=$?
   if ((rc != 0)); then
+    provision_fail_reason="ssh-failed"
+    provision_fail_rc=$rc
     return 1
   fi
   return 0
 }
 
 fanout_host() {
-  local host="$1" override user rc=0
+  local host="$1" override user rc=0 host_lower
+
+  # Skip the controller itself: it's a no-op round-trip (a local
+  # pmset/lock-guard invocation would achieve the same lock this SSH call
+  # does) and issue #27 flags the SSH-to-self round-trip as an unnecessary,
+  # possibly risky trigger vector when the controller is also listed as its
+  # own Synergy client. This is a fan-out-level skip, not a change to the
+  # underlying "SSH-to-self is a no-op on an already-locked Mac" fact noted
+  # in CLAUDE.md — that guidance is about the lock itself, not about
+  # whether to attempt the round-trip at all.
+  host_lower="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$host_lower" == "$local_host" ]]; then
+    log "client=$host warn=skip-self"
+    return 0
+  fi
+
   override=$(lookup_user "$host")
   user="${override:-$default_user}"
 
@@ -127,7 +173,11 @@ fanout_host() {
       "$user@$host" "\$HOME/.local/bin/lock-guard" >/dev/null 2>&1 || rc=$?
     log "client=$host user=$user ssh_exit=$rc"
   else
-    log "client=$host user=$user warn=provision-failed"
+    if [[ "$provision_fail_reason" == "ssh-failed" ]]; then
+      log "client=$host user=$user warn=provision-failed reason=$provision_fail_reason ssh_exit=$provision_fail_rc"
+    else
+      log "client=$host user=$user warn=provision-failed reason=$provision_fail_reason"
+    fi
     "$ssh_cmd" -n -o BatchMode=yes \
       -o ConnectTimeout=5 \
       -o StrictHostKeyChecking=accept-new \

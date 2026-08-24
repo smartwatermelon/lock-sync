@@ -153,6 +153,17 @@ mimolette.local"
 tilsit.local
 mimolette.local"
   export STUB_SSH_FAIL_HOST="tilsit.local"
+  # Pin the two non-failing clients to the steady state (remote checksum
+  # already matches local), so this test isolates the one variable it is
+  # about: a single host's SSH failure. Without this, asiago and mimolette
+  # answer their shasum call with empty stdout, which never matches
+  # local_sha, so provision_host pushes lock-guard to both on every run —
+  # the test would still pass (both paths end in ssh_exit=0) while
+  # silently exercising the push path instead of the steady-state path.
+  # STUB_SSH_FAIL_HOST is checked before the checksum stubs in the ssh
+  # stub, so tilsit still fails as intended.
+  local_sha=$(shasum -a 256 "$BATS_TEST_DIRNAME/../bin/lock-guard" | awk '{print $1}')
+  export STUB_SSH_CHECKSUM_ALL_MATCH="$local_sha"
   make_ssh_stub
 
   run "$SCRIPT"
@@ -166,6 +177,10 @@ mimolette.local"
   [[ "${lines[2]}" == *"ssh_exit=255"* ]]
   [[ "${lines[3]}" == *"client=mimolette.local"* ]]
   [[ "${lines[3]}" == *"ssh_exit=0"* ]]
+  # No client should have been pushed to: asiago and mimolette are pinned to
+  # the steady state, and tilsit fails its checksum check before any push.
+  run grep -q 'CMD=.*cat >' "$SSH_LOG"
+  [ "$status" -ne 0 ]
 }
 
 @test "host with config override uses override user in ssh target" {

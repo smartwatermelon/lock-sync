@@ -1,7 +1,31 @@
 # `lock-guard`: suppress lock during meetings
 
 Date: 2026-08-12
-Status: approved, ready to implement
+Status: implemented, with one deviation (see "Implementation note" below)
+
+## Implementation note: mic-active check uses `pmset`, not `ioreg`
+
+This document is the plan as approved on 2026-08-12 and is kept as the
+historical record. The shipped implementation deviates from it in one
+place: **the microphone-active signal.**
+
+- **Planned:** `ioreg -c IOAudioEngine -r -l`, matching an audio engine in
+  `running` state, stubbed in tests via `LOCK_SYNC_IOREG`.
+- **Shipped:** `pmset -g assertions`, matching
+  `coreaudiod.*preventuseridlesleep`, stubbed in tests via
+  `LOCK_SYNC_PMSET` (the same override already used for the
+  `pmset displaysleepnow` call, so there is no separate mic stub).
+
+**Why:** `IOAudioEngine` is a legacy Intel/kext-era class. On Apple Silicon
+the audio HAL runs in userspace and publishes no live `IOAudioEngine`
+instances, so the planned check never matched — it would have silently
+failed open on every current Mac. `pmset -g assertions` reports the power
+assertion `coreaudiod` takes while an audio input stream is open, which was
+verified against real mic open/close on Apple Silicon.
+
+Every `ioreg`, `IOAudioEngine`, and `LOCK_SYNC_IOREG` reference below is
+part of the superseded plan and does **not** describe the shipped code.
+See `check_mic_active` in `bin/lock-guard` for the real implementation.
 
 ## Purpose
 
@@ -33,6 +57,8 @@ call `pmset displaysleepnow` or skip it and log why.
 2. **Microphone actively in use** — `ioreg -c IOAudioEngine -r -l` shows an
    audio engine in `running` state. Catches apps not in the process list,
    and any call where you're actually speaking.
+   (**Superseded:** shipped as `pmset -g assertions` — see "Implementation
+   note" above.)
 3. **Google Meet tab open in Chrome** — `osascript` asks Chrome for open tab
    URLs and checks for the Meet in-call URL pattern
    (`meet.google.com/xxx-yyyy-zzz`, not the bare landing page). This is the
@@ -105,6 +131,13 @@ defaulting to the real absolute-path binary. Tests point these at stub
 scripts under a `STUB_DIR`, matching `lock-fanout.bats`'s `make_ssh_stub`
 pattern. `pmset` itself is also stubbed the same way
 (`LOCK_SYNC_PMSET`), so tests can assert whether it was called or not.
+
+**Superseded:** `LOCK_SYNC_IOREG` was never implemented. Because the mic
+check shipped on `pmset -g assertions` (see "Implementation note" above),
+the mic-active stub is `LOCK_SYNC_PMSET` — the same override that already
+covers the `pmset displaysleepnow` call. `lock-guard` therefore has three
+overridable commands, not four: `LOCK_SYNC_PGREP`, `LOCK_SYNC_OSASCRIPT`,
+and `LOCK_SYNC_PMSET`.
 
 ## Config file: `~/.config/lock-sync/guard-processes`
 

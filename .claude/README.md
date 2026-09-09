@@ -12,7 +12,7 @@ The `.claude/` directory provides project-specific configuration and extensions 
 
 ## Directory Structure
 
-```
+```text
 .claude/
 ├── README.md                  # This file
 ├── config.sh.template         # Template for project configuration
